@@ -1,7 +1,16 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
-import { Activity, CheckCircle2, FileText, Package } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import type { PlatformMachineReleaseStorageRetentionState } from "@air-jam/sdk/platform-machine";
+import {
+  Activity,
+  CheckCircle2,
+  Download,
+  FileText,
+  Loader2,
+  Package,
+} from "lucide-react";
 
 const formatDateTime = (value?: Date | string | null): string => {
   if (!value) return "Not yet";
@@ -40,6 +49,9 @@ type ReleaseGenerationDetail = {
   extractedSizeBytes: number | null;
   fileCount: number | null;
   contentHash: string | null;
+  storageRetention: {
+    state: PlatformMachineReleaseStorageRetentionState;
+  };
 };
 
 type ReleaseDetailPanelsProps = {
@@ -74,6 +86,8 @@ type ReleaseDetailPanelsProps = {
     createdAt: Date | string;
     reporterEmail: string | null;
   }>;
+  exportingGenerationId?: string | null;
+  onExportGeneration?: (generationId: string) => void;
 };
 
 export function ReleaseDetailPanels({
@@ -83,6 +97,8 @@ export function ReleaseDetailPanels({
   checks,
   jobs,
   reports,
+  exportingGenerationId,
+  onExportGeneration,
 }: ReleaseDetailPanelsProps) {
   const generationSequenceById = new Map(
     generations.map((generation) => [generation.id, generation.sequence]),
@@ -172,6 +188,24 @@ export function ReleaseDetailPanels({
                       </code>
                     </div>
                   )}
+                  {onExportGeneration &&
+                    generation.storageRetention.state !== "deleting" &&
+                    generation.storageRetention.state !== "tombstoned" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        disabled={Boolean(exportingGenerationId)}
+                        onClick={() => onExportGeneration(generation.id)}
+                      >
+                        {exportingGenerationId === generation.id ? (
+                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Download className="mr-1.5 h-3.5 w-3.5" />
+                        )}
+                        Export archive
+                      </Button>
+                    )}
                 </div>
               );
             })}

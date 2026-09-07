@@ -69,6 +69,14 @@ const createMemoryReleaseStorage = () => {
         expiresAt: "2042-01-01T00:15:00.000Z",
       };
     },
+    async createArtifactDownloadTarget({ key, filename }) {
+      return {
+        method: "GET",
+        url: `https://downloads.example.invalid/${encodeURIComponent(key)}`,
+        filename,
+        expiresAt: "2042-01-01T00:15:00.000Z",
+      };
+    },
     async headObject(key) {
       const object = objects.get(key);
       if (!object) return null;

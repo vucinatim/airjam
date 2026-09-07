@@ -8,6 +8,7 @@ import {
   operationalJobs,
   users,
 } from "@/db/schema";
+import { resolveReleaseStorageRetentionState } from "@/lib/releases/release-retention-policy";
 import {
   isReleaseOperationalJobKind,
   type ReleaseOperationalJobKind,
@@ -63,6 +64,7 @@ export const projectReleaseJob = (job: ReleaseOperationalJobRecord) => ({
 
 export const projectReleaseGeneration = (
   generation: ReleaseGenerationRecord,
+  now = new Date(),
 ) => ({
   id: generation.id,
   releaseId: generation.releaseId,
@@ -85,6 +87,23 @@ export const projectReleaseGeneration = (
   readyAt: generation.readyAt,
   failedAt: generation.failedAt,
   abandonedAt: generation.abandonedAt,
+  storageRetention: {
+    state: resolveReleaseStorageRetentionState({
+      clock: {
+        inactiveAt: generation.storageInactiveAt,
+        warnedAt: generation.storageRetentionWarnedAt,
+        eligibleAt: generation.storageRetentionEligibleAt,
+        cleanupStartedAt: generation.storageCleanupStartedAt,
+        deletedAt: generation.storageDeletedAt,
+      },
+      now,
+    }),
+    inactiveAt: generation.storageInactiveAt,
+    warnedAt: generation.storageRetentionWarnedAt,
+    eligibleAt: generation.storageRetentionEligibleAt,
+    cleanupStartedAt: generation.storageCleanupStartedAt,
+    deletedAt: generation.storageDeletedAt,
+  },
 });
 
 export const projectReleaseCheck = (check: ReleaseCheckRecord) => ({

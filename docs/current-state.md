@@ -178,7 +178,7 @@ These are now baseline truths, not open architecture debates:
     5. the exact candidate package graph now passes an isolated-registry
        bootstrap proof with no local dependency specs or private repository
        paths
-    6. the generated project discovers the canonical CLI, all `26` MCP tools,
+    6. the generated project discovers the canonical CLI, all `27` MCP tools,
        project-scoped Codex configuration, managed dev lifecycle, typecheck,
        lint, tests, and production build
     7. the MCP server reports its shipped package version rather than a
@@ -388,7 +388,7 @@ Gate `G2-02` is independently re-closed after review found that the first
 bootstrap run proved package versions and registry configuration without
 positively binding installed bytes to that run's packed candidates. The proof
 now compares SHA-512 integrity across the tarballs, registry metadata, and
-generated lockfile; requires all lifecycle scripts and all `26` MCP tools; uses
+generated lockfile; requires all lifecycle scripts and all `27` MCP tools; uses
 bounded command, protocol, registry, and workspace-lock waits; and passes a
 fresh managed-dev plus typecheck, lint, test, and build run. That replay also
 fixed standalone topology so a configured Vite port is advertised consistently
@@ -397,7 +397,7 @@ to hosts, controllers, sockets, and readiness tooling.
 Gate `G6-01` is closed by the
 [public install matrix audit](./audits/v1-public-release/public-install-matrix-audit.md).
 The exact five-package candidate graph passed clean `npx` creation, CLI and all
-26 MCP tool discovery, managed development, and generated-project typecheck,
+27 MCP tool discovery, managed development, and generated-project typecheck,
 lint, tests, and build on Linux, macOS, and Windows across Node.js 22 and 24.
 All six cells stayed inside explicit package, install-time, cell-time, and
 archive-extraction budgets. The proof used a fallback-free candidate registry
@@ -523,8 +523,10 @@ cleanup for terminal release generations and inactive unassigned media. The
 first object manifest survives partial deletion and retries, database
 tombstones control quota accounting, and the canonical CLI provides redacted
 preview/apply plus resource-filtered inspection. Superseded unpublished
-artifact warning and long retention, realtime admission, overload proof, and
-explicit production rollout remain part of the unfinished gate.
+generations now also have a PostgreSQL-enforced 180-day lifecycle with a
+durable seven-day warning, creator export through dashboard/API/CLI/MCP, and
+retention renewal when exported or published. Realtime admission, overload
+proof, and explicit production rollout remain part of the unfinished gate.
 
 The previous narrow v1 closeout plan was superseded by the 1.0 roadmap and is
 preserved in the
@@ -563,8 +565,9 @@ In short:
 1. keep the now-complete canonical production migration lifecycle and schema
    compatibility boundary stable; `G3-06` is merged, applied, and independently
    verified against the exact Railway production deployment
-2. finish warned artifact retention and invisible realtime admission in
-   `G3-02`, then provision and observe the operational worker safely
+2. finish invisible realtime admission in `G3-02`, then provision and observe
+   the operational worker and the now-implemented storage retention lifecycle
+   safely
 3. provision an isolated ephemeral Railway/R2 rehearsal profile and unblock the
    Codex plus Claude Desktop golden-path proofs
 4. keep the completed recovery contract stable and finish supply-chain trust as

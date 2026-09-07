@@ -9,6 +9,7 @@ export const lifecycleCleanupResourceKindSchema = z.enum(
 
 export const lifecycleCleanupRetentionClassValues = [
   "terminal_release_generation_24h",
+  "superseded_unpublished_release_180d",
   "inactive_game_media_24h",
 ] as const;
 
@@ -30,15 +31,18 @@ export const lifecycleCleanupJobPayloadSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    const expectedRetentionClass =
+    const expectedRetentionClasses =
       value.resourceKind === "release_generation"
-        ? "terminal_release_generation_24h"
-        : "inactive_game_media_24h";
-    if (value.retentionClass !== expectedRetentionClass) {
+        ? [
+            "terminal_release_generation_24h",
+            "superseded_unpublished_release_180d",
+          ]
+        : ["inactive_game_media_24h"];
+    if (!expectedRetentionClasses.includes(value.retentionClass)) {
       context.addIssue({
         code: "custom",
         path: ["retentionClass"],
-        message: `${value.resourceKind} requires ${expectedRetentionClass}.`,
+        message: `${value.resourceKind} requires one of: ${expectedRetentionClasses.join(", ")}.`,
       });
     }
     if (Date.parse(value.eligibleAt) > Date.parse(value.plannedAt)) {

@@ -8,6 +8,13 @@ export type ReleaseArtifactUploadTarget = {
   expiresAt: string;
 };
 
+export type ReleaseArtifactDownloadTarget = {
+  method: "GET";
+  url: string;
+  expiresAt: string;
+  filename: string;
+};
+
 export type ReleaseStoredObjectHead = {
   key: string;
   sizeBytes: number;
@@ -30,6 +37,11 @@ export type CreateReleaseArtifactUploadTargetInput = {
   originalFilename: string;
 };
 
+export type CreateReleaseArtifactDownloadTargetInput = {
+  key: string;
+  filename: string;
+};
+
 export type PutReleaseObjectInput = {
   key: string;
   body: Buffer;
@@ -42,6 +54,9 @@ export interface ReleaseStorage {
   createArtifactUploadTarget(
     input: CreateReleaseArtifactUploadTargetInput,
   ): Promise<ReleaseArtifactUploadTarget>;
+  createArtifactDownloadTarget(
+    input: CreateReleaseArtifactDownloadTargetInput,
+  ): Promise<ReleaseArtifactDownloadTarget>;
   headObject(key: string): Promise<ReleaseStoredObjectHead | null>;
   readObject(key: string, options?: { expectedEtag?: string }): Promise<Buffer>;
   putObject(input: PutReleaseObjectInput): Promise<void>;

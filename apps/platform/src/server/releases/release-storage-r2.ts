@@ -17,6 +17,28 @@ import { getReleaseStorageConfig } from "./release-storage-config";
 
 const METADATA_ORIGINAL_FILENAME_KEY = "original-filename";
 
+export const normalizeReleaseDownloadFilename = (filename: string): string => {
+  const leaf = filename.replaceAll("\\", "/").split("/").at(-1)?.trim();
+  return !leaf || leaf === "." || leaf === ".."
+    ? "air-jam-release.zip"
+    : leaf.replace(/[\r\n]/g, "_");
+};
+
+export const buildReleaseAttachmentContentDisposition = (
+  filename: string,
+): string => {
+  const asciiFilename = filename
+    .normalize("NFKD")
+    .replace(/[^\x20-\x7e]/g, "_")
+    .replace(/["\\]/g, "_")
+    .replace(/[\r\n]/g, "_");
+  const encodedFilename = encodeURIComponent(filename).replace(
+    /[!'()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`;
+};
+
 const normalizeMetadata = (
   metadata: Record<string, string> | undefined,
 ): Record<string, string> =>
@@ -204,6 +226,30 @@ export const createR2ReleaseStorage = (): ReleaseStorage => {
           "content-type": contentType,
           "if-none-match": "*",
         },
+        expiresAt: new Date(
+          Date.now() + config.uploadUrlTtlSeconds * 1_000,
+        ).toISOString(),
+      };
+    },
+
+    async createArtifactDownloadTarget({ key, filename }) {
+      const downloadFilename = normalizeReleaseDownloadFilename(filename);
+      const url = await getSignedUrl(
+        client,
+        new GetObjectCommand({
+          Bucket: config.bucket,
+          Key: key,
+          ResponseContentDisposition:
+            buildReleaseAttachmentContentDisposition(downloadFilename),
+          ResponseContentType: "application/zip",
+        }),
+        { expiresIn: config.uploadUrlTtlSeconds },
+      );
+
+      return {
+        method: "GET",
+        url,
+        filename: downloadFilename,
         expiresAt: new Date(
           Date.now() + config.uploadUrlTtlSeconds * 1_000,
         ).toISOString(),

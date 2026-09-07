@@ -83,6 +83,9 @@ export default function GameReleasesPage() {
     null,
   );
   const [actionReleaseId, setActionReleaseId] = useState<string | null>(null);
+  const [exportingGenerationId, setExportingGenerationId] = useState<
+    string | null
+  >(null);
 
   const { data: releases, isLoading } = api.release.listByGame.useQuery(
     { gameId },
@@ -104,6 +107,7 @@ export default function GameReleasesPage() {
   const finalizeUpload = api.release.finalizeUpload.useMutation();
   const publishRelease = api.release.publish.useMutation();
   const archiveRelease = api.release.archive.useMutation();
+  const requestExport = api.release.requestExport.useMutation();
 
   const refreshReleaseData = async () => {
     await Promise.all([
@@ -229,6 +233,45 @@ export default function GameReleasesPage() {
       });
     } finally {
       setActionReleaseId(null);
+    }
+  };
+
+  const exportGeneration = async ({
+    releaseId,
+    generationId,
+  }: {
+    releaseId: string;
+    generationId: string;
+  }) => {
+    try {
+      setExportingGenerationId(generationId);
+      setFeedback(null);
+      const result = await requestExport.mutateAsync({
+        releaseId,
+        generationId,
+      });
+      const link = document.createElement("a");
+      link.href = result.download.url;
+      link.download = result.download.filename;
+      link.rel = "noopener";
+      link.click();
+      await refreshReleaseData();
+      setFeedback({
+        variant: "default",
+        title: "Release export started",
+        description: `Generation #${result.generation.sequence} is downloading as ${result.download.filename}.`,
+      });
+    } catch (error) {
+      setFeedback({
+        variant: "destructive",
+        title: "Release export failed",
+        description:
+          error instanceof Error
+            ? error.message
+            : "The release generation could not be exported.",
+      });
+    } finally {
+      setExportingGenerationId(null);
     }
   };
 
@@ -388,6 +431,8 @@ export default function GameReleasesPage() {
                 release.promotedGeneration ??
                 release.generations[0] ??
                 null;
+              const storageRetention =
+                release.promotedGeneration?.storageRetention ?? null;
               const hasDetails =
                 release.generations.length > 0 ||
                 release.checks.length > 0 ||
@@ -421,6 +466,19 @@ export default function GameReleasesPage() {
                                 Gen #{candidateGeneration.sequence} candidate
                               </Badge>
                             )}
+                            {storageRetention &&
+                              storageRetention.state !== "active" && (
+                                <Badge
+                                  variant={
+                                    storageRetention.state === "tombstoned"
+                                      ? "destructive"
+                                      : "secondary"
+                                  }
+                                  className="text-[10px]"
+                                >
+                                  Storage {storageRetention.state}
+                                </Badge>
+                              )}
                             {openReportCount > 0 && (
                               <Badge
                                 variant="destructive"
@@ -445,6 +503,22 @@ export default function GameReleasesPage() {
                               {release.id.slice(0, 8)}
                             </span>
                           </div>
+                          {storageRetention?.state === "warned" && (
+                            <p className="text-xs text-amber-700 dark:text-amber-300">
+                              This unpublished build is superseded and will
+                              become reclaimable on{" "}
+                              {formatDateShort(storageRetention.eligibleAt)}.
+                              {release.status === "ready"
+                                ? " Export it below or make it live to retain it permanently."
+                                : " Export it below to keep a local copy or renew its retention window."}
+                            </p>
+                          )}
+                          {storageRetention?.state === "reclaimable" && (
+                            <p className="text-destructive text-xs">
+                              This superseded unpublished build has completed
+                              its retention window and is awaiting cleanup.
+                            </p>
+                          )}
                         </div>
                       </div>
 
@@ -548,6 +622,13 @@ export default function GameReleasesPage() {
                             checks={release.checks}
                             jobs={release.jobs}
                             reports={release.reports}
+                            exportingGenerationId={exportingGenerationId}
+                            onExportGeneration={(generationId) =>
+                              void exportGeneration({
+                                releaseId: release.id,
+                                generationId,
+                              })
+                            }
                           />
                         </div>
                       </CollapsibleContent>

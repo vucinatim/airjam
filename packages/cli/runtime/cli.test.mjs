@@ -212,6 +212,15 @@ test("airjam exposes release publish help", () => {
   assert.match(output, /--release <id>/);
 });
 
+test("airjam exposes exact-generation release export help", () => {
+  const output = runCliHelp("release", "export");
+
+  assert.match(output, /Usage: airjam release export/);
+  assert.match(output, /--release <id>/);
+  assert.match(output, /--generation <id>/);
+  assert.match(output, /--out <path>/);
+});
+
 test("airjam exposes auth login help", () => {
   const output = runCliHelp("auth", "login");
 

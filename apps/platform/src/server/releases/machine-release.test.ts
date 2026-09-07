@@ -2,20 +2,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./release-application-service", () => ({
   finalizeOwnedReleaseUpload: vi.fn(),
+  requestOwnedReleaseGenerationExport: vi.fn(),
   requestOwnedReleaseUploadTarget: vi.fn(),
 }));
 
 import { OperationalAdmissionDeniedError } from "@/server/operations/production-control-service";
 import {
   platformMachineFinalizeReleaseUploadResultSchema,
+  platformMachineRequestReleaseGenerationExportResultSchema,
   platformMachineRequestReleaseUploadTargetResultSchema,
 } from "@air-jam/sdk/platform-machine";
 import {
   finalizeReleaseUploadForMachine,
+  requestReleaseGenerationExportForMachine,
   requestReleaseUploadTargetForMachine,
 } from "./machine-release";
 import {
   finalizeOwnedReleaseUpload,
+  requestOwnedReleaseGenerationExport,
   requestOwnedReleaseUploadTarget,
 } from "./release-application-service";
 
@@ -42,6 +46,14 @@ const generation = {
   readyAt: null,
   failedAt: null,
   abandonedAt: null,
+  storageRetention: {
+    state: "active" as const,
+    inactiveAt: null,
+    warnedAt: null,
+    eligibleAt: null,
+    cleanupStartedAt: null,
+    deletedAt: null,
+  },
 };
 
 const job = {
@@ -154,6 +166,31 @@ describe("machine release finalization", () => {
     expect(JSON.stringify(result)).not.toContain("private-generation");
     expect(() =>
       platformMachineRequestReleaseUploadTargetResultSchema.parse(result),
+    ).not.toThrow();
+  });
+
+  it("returns a signed export target without exposing its storage key", async () => {
+    vi.mocked(requestOwnedReleaseGenerationExport).mockResolvedValueOnce({
+      generation: generation as never,
+      download: {
+        method: "GET",
+        url: "https://downloads.airjam.test/game.zip",
+        filename: "game.zip",
+        expiresAt: "2026-04-25T10:10:00.000Z",
+      },
+    });
+
+    const result = await requestReleaseGenerationExportForMachine({
+      releaseId: "rel_1",
+      generationId: generation.id,
+      userId: "user_1",
+    });
+
+    expect(result.generation.id).toBe(generation.id);
+    expect(result.download.method).toBe("GET");
+    expect(JSON.stringify(result)).not.toContain("zipObjectKey");
+    expect(() =>
+      platformMachineRequestReleaseGenerationExportResultSchema.parse(result),
     ).not.toThrow();
   });
 

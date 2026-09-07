@@ -20,7 +20,7 @@ import {
 import { enqueueOperationalJob } from "@/server/jobs/operational-job-service";
 import { createReleaseGenerationJobPayload } from "@/server/jobs/release-job-contract";
 import { assertOperationalLaneAccepting } from "@/server/operations/production-control-service";
-import { desc, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { assertOwnedRelease } from "./assert-owned-release";
 import { assertReleaseExists } from "./assert-release-exists";
 import {
@@ -36,6 +36,7 @@ import {
   publishRelease,
   quarantineRelease,
 } from "./release-status-service";
+import { getReleaseStorage } from "./release-storage";
 
 const reloadOwnedRelease = async ({
   actor,
@@ -197,6 +198,143 @@ export const finalizeOwnedReleaseUpload = async ({
         (candidate) => candidate.id === generationId,
       ) ?? generation,
     job,
+  };
+};
+
+export const requestOwnedReleaseGenerationExport = async ({
+  actor,
+  releaseId,
+  generationId,
+  database = db,
+  storage = getReleaseStorage(),
+}: {
+  actor: AuthenticatedPlatformActor;
+  releaseId: string;
+  generationId: string;
+  database?: typeof db;
+  storage?: ReturnType<typeof getReleaseStorage>;
+}) => {
+  const [ownedGeneration] = await database
+    .select({ generation: gameReleaseGenerations })
+    .from(gameReleaseGenerations)
+    .innerJoin(
+      gameReleases,
+      eq(gameReleaseGenerations.releaseId, gameReleases.id),
+    )
+    .innerJoin(games, eq(gameReleases.gameId, games.id))
+    .where(
+      and(
+        eq(gameReleaseGenerations.id, generationId),
+        eq(gameReleaseGenerations.releaseId, releaseId),
+        eq(games.userId, actor.userId),
+      ),
+    );
+
+  if (!ownedGeneration) {
+    throw new PlatformApplicationError({
+      code: "not_found",
+      message: "Release generation not found or unauthorized.",
+    });
+  }
+
+  if (
+    ownedGeneration.generation.storageCleanupStartedAt ||
+    ownedGeneration.generation.storageDeletedAt
+  ) {
+    throw new PlatformApplicationError({
+      code: "conflict",
+      message: "This release generation is no longer available for export.",
+    });
+  }
+
+  const storedObject = await storage.headObject(
+    ownedGeneration.generation.zipObjectKey,
+  );
+  if (!storedObject) {
+    throw new PlatformApplicationError({
+      code: "conflict",
+      message: "The release archive is unavailable in storage.",
+    });
+  }
+  const expectedSize =
+    ownedGeneration.generation.observedSizeBytes ??
+    ownedGeneration.generation.declaredSizeBytes;
+  if (
+    storedObject.sizeBytes !== expectedSize ||
+    (ownedGeneration.generation.observedEtag !== null &&
+      storedObject.etag !== ownedGeneration.generation.observedEtag)
+  ) {
+    throw new PlatformApplicationError({
+      code: "conflict",
+      message: "The release archive no longer matches its immutable record.",
+    });
+  }
+
+  const download = await storage.createArtifactDownloadTarget({
+    key: ownedGeneration.generation.zipObjectKey,
+    filename: ownedGeneration.generation.originalFilename,
+  });
+
+  const generation = await database.transaction(async (tx) => {
+    const [record] = await tx
+      .select()
+      .from(gameReleaseGenerations)
+      .where(
+        and(
+          eq(gameReleaseGenerations.id, generationId),
+          eq(gameReleaseGenerations.releaseId, releaseId),
+        ),
+      )
+      .for("update");
+
+    if (!record) {
+      throw new PlatformApplicationError({
+        code: "not_found",
+        message: "Release generation not found or unauthorized.",
+      });
+    }
+
+    const [ownedRelease] = await tx
+      .select({ id: gameReleases.id })
+      .from(gameReleases)
+      .innerJoin(games, eq(gameReleases.gameId, games.id))
+      .where(
+        and(eq(gameReleases.id, releaseId), eq(games.userId, actor.userId)),
+      );
+
+    if (!ownedRelease) {
+      throw new PlatformApplicationError({
+        code: "not_found",
+        message: "Release generation not found or unauthorized.",
+      });
+    }
+
+    if (record.storageCleanupStartedAt || record.storageDeletedAt) {
+      throw new PlatformApplicationError({
+        code: "conflict",
+        message: "This release generation is no longer available for export.",
+      });
+    }
+
+    if (record.storageInactiveAt) {
+      const [refreshed] = await tx
+        .update(gameReleaseGenerations)
+        .set({
+          storageInactiveAt: sql`clock_timestamp()`,
+          storageRetentionWarnedAt: null,
+          storageRetentionEligibleAt: null,
+        })
+        .where(eq(gameReleaseGenerations.id, record.id))
+        .returning();
+      return refreshed ?? record;
+    }
+
+    return record;
+  });
+
+  return {
+    generation: projectReleaseGeneration(generation),
+    download,
   };
 };
 

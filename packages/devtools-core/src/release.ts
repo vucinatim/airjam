@@ -5,6 +5,7 @@ import {
   platformMachineListOwnedGamesResultSchema,
   platformMachineListReleasesResultSchema,
   platformMachinePublishReleaseResultSchema,
+  platformMachineRequestReleaseGenerationExportResultSchema,
   platformMachineRequestReleaseUploadTargetResultSchema,
 } from "@air-jam/sdk/platform-machine";
 import {
@@ -52,6 +53,8 @@ import type {
   BundleLocalReleaseOptions,
   BundleLocalReleaseResult,
   CommandResult,
+  ExportPlatformReleaseGenerationOptions,
+  ExportPlatformReleaseGenerationResult,
   FinalizePlatformReleaseGenerationOptions,
   InspectLocalReleaseOptions,
   InspectPlatformReleaseOptions,
@@ -557,10 +560,7 @@ const buildArgsByPackageManager = {
   pnpm: ["build"],
   yarn: ["build"],
   bun: ["run", "build"],
-} satisfies Record<
-  Exclude<AirJamPackageManager, "unknown">,
-  readonly string[]
->;
+} satisfies Record<Exclude<AirJamPackageManager, "unknown">, readonly string[]>;
 
 const resolveBuildCommand = (
   packageManager: AirJamPackageManager,
@@ -1417,6 +1417,51 @@ export const finalizePlatformReleaseGeneration = async ({
     token: resolved.token,
     schema: platformMachineFinalizeReleaseUploadResultSchema,
   });
+};
+
+export const exportPlatformReleaseGeneration = async ({
+  platformUrl,
+  token,
+  releaseId,
+  generationId,
+  cwd = process.cwd(),
+  out,
+}: ExportPlatformReleaseGenerationOptions): Promise<ExportPlatformReleaseGenerationResult> => {
+  const resolved = await resolvePlatformMachineAuth({ platformUrl, token });
+  const target = await requestPlatformMachineApi({
+    baseUrl: resolved.baseUrl,
+    pathname: `/api/cli/releases/${encodeURIComponent(releaseId)}/generations/${encodeURIComponent(generationId)}/export`,
+    method: "POST",
+    token: resolved.token,
+    schema: platformMachineRequestReleaseGenerationExportResultSchema,
+  });
+  const response = await fetch(target.download.url, {
+    method: target.download.method,
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Release generation export failed with status ${response.status}.`,
+    );
+  }
+
+  const archive = Buffer.from(await response.arrayBuffer());
+  const expectedSize =
+    target.generation.observedSizeBytes ?? target.generation.declaredSizeBytes;
+  if (archive.length !== expectedSize) {
+    throw new Error(
+      `Release generation export size mismatch: expected ${expectedSize} bytes, received ${archive.length}.`,
+    );
+  }
+
+  const outputFile = path.resolve(cwd, out ?? target.download.filename);
+  await mkdir(path.dirname(outputFile), { recursive: true });
+  await writeFile(outputFile, archive, { flag: "wx" });
+
+  return {
+    ...target,
+    outputFile,
+    sizeBytes: archive.length,
+  };
 };
 
 export const waitForPlatformReleaseGeneration = async ({

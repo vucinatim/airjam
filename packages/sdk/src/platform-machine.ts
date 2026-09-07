@@ -230,6 +230,22 @@ export type PlatformMachineRequestOwnedGameMediaUploadTargetInput = z.infer<
   typeof platformMachineRequestOwnedGameMediaUploadTargetInputSchema
 >;
 
+export const platformMachineReleaseStorageRetentionStateValues = [
+  "active",
+  "warned",
+  "reclaimable",
+  "deleting",
+  "tombstoned",
+] as const;
+
+export const platformMachineReleaseStorageRetentionStateSchema = z.enum(
+  platformMachineReleaseStorageRetentionStateValues,
+);
+
+export type PlatformMachineReleaseStorageRetentionState = z.infer<
+  typeof platformMachineReleaseStorageRetentionStateSchema
+>;
+
 export const platformMachineReleaseGenerationSchema = z.object({
   id: z.string().min(1),
   releaseId: z.string().min(1),
@@ -252,6 +268,14 @@ export const platformMachineReleaseGenerationSchema = z.object({
   readyAt: z.string().min(1).nullable(),
   failedAt: z.string().min(1).nullable(),
   abandonedAt: z.string().min(1).nullable(),
+  storageRetention: z.object({
+    state: platformMachineReleaseStorageRetentionStateSchema,
+    inactiveAt: z.string().min(1).nullable(),
+    warnedAt: z.string().min(1).nullable(),
+    eligibleAt: z.string().min(1).nullable(),
+    cleanupStartedAt: z.string().min(1).nullable(),
+    deletedAt: z.string().min(1).nullable(),
+  }),
 });
 
 export type PlatformMachineReleaseGeneration = z.infer<
@@ -471,6 +495,33 @@ export const platformMachineReleaseUploadTargetSchema = z.object({
 
 export type PlatformMachineReleaseUploadTarget = z.infer<
   typeof platformMachineReleaseUploadTargetSchema
+>;
+
+export const platformMachineReleaseDownloadTargetSchema = z.object({
+  method: z.literal("GET"),
+  url: z.string().url(),
+  filename: z
+    .string()
+    .trim()
+    .min(1)
+    .max(255)
+    .regex(/^[^/\\\r\n]+$/u)
+    .refine((value) => value !== "." && value !== ".."),
+  expiresAt: z.string().min(1),
+});
+
+export type PlatformMachineReleaseDownloadTarget = z.infer<
+  typeof platformMachineReleaseDownloadTargetSchema
+>;
+
+export const platformMachineRequestReleaseGenerationExportResultSchema =
+  z.object({
+    generation: platformMachineReleaseGenerationSchema,
+    download: platformMachineReleaseDownloadTargetSchema,
+  });
+
+export type PlatformMachineRequestReleaseGenerationExportResult = z.infer<
+  typeof platformMachineRequestReleaseGenerationExportResultSchema
 >;
 
 export const platformMachineRequestReleaseUploadTargetResultSchema = z.object({

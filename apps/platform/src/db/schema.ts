@@ -342,6 +342,13 @@ export const gameReleaseGenerations = pgTable(
     readyAt: timestamp("ready_at", { withTimezone: true }),
     failedAt: timestamp("failed_at", { withTimezone: true }),
     abandonedAt: timestamp("abandoned_at", { withTimezone: true }),
+    storageInactiveAt: timestamp("storage_inactive_at", { withTimezone: true }),
+    storageRetentionWarnedAt: timestamp("storage_retention_warned_at", {
+      withTimezone: true,
+    }),
+    storageRetentionEligibleAt: timestamp("storage_retention_eligible_at", {
+      withTimezone: true,
+    }),
     storageCleanupStartedAt: timestamp("storage_cleanup_started_at", {
       withTimezone: true,
     }),
@@ -367,9 +374,9 @@ export const gameReleaseGenerations = pgTable(
       table.createdAt,
     ),
     cleanupIdx: index("game_release_generations_cleanup_idx")
-      .on(table.status, table.createdAt)
+      .on(table.status, table.storageRetentionEligibleAt, table.createdAt)
       .where(
-        sql`${table.storageDeletedAt} is null and ${table.status} in ('failed', 'abandoned')`,
+        sql`${table.storageDeletedAt} is null and (${table.status} in ('failed', 'abandoned') or (${table.status} = 'ready' and ${table.storageRetentionEligibleAt} is not null))`,
       ),
     requiredTextCheck: check(
       "game_release_generations_required_text_check",
@@ -397,7 +404,28 @@ export const gameReleaseGenerations = pgTable(
     ),
     storageCleanupCheck: check(
       "game_release_generations_storage_cleanup_check",
-      sql`(${table.storageCleanupStartedAt} is null and ${table.storageDeletedAt} is null) or (${table.storageCleanupStartedAt} is not null and ${table.status} in ('failed', 'abandoned') and (${table.storageDeletedAt} is null or ${table.storageDeletedAt} >= ${table.storageCleanupStartedAt}))`,
+      sql`(${table.storageCleanupStartedAt} is null and ${table.storageDeletedAt} is null) or (${table.storageCleanupStartedAt} is not null and (${table.status} in ('failed', 'abandoned') or (${table.status} = 'ready' and ${table.storageRetentionEligibleAt} is not null)) and (${table.storageDeletedAt} is null or ${table.storageDeletedAt} >= ${table.storageCleanupStartedAt}))`,
+    ),
+    storageRetentionCheck: check(
+      "game_release_generations_storage_retention_check",
+      sql`(
+        ${table.storageInactiveAt} is null
+        and ${table.storageRetentionWarnedAt} is null
+        and ${table.storageRetentionEligibleAt} is null
+      ) or (
+        ${table.status} = 'ready'
+        and ${table.storageInactiveAt} is not null
+        and (
+          (${table.storageRetentionWarnedAt} is null and ${table.storageRetentionEligibleAt} is null)
+          or (
+            ${table.storageRetentionWarnedAt} is not null
+            and ${table.storageRetentionEligibleAt} is not null
+            and ${table.storageRetentionWarnedAt} >= ${table.storageInactiveAt}
+            and ${table.storageRetentionEligibleAt} >= ${table.storageInactiveAt} + interval '180 days'
+            and ${table.storageRetentionEligibleAt} >= ${table.storageRetentionWarnedAt} + interval '7 days'
+          )
+        )
+      )`,
     ),
     lifecycleCheck: check(
       "game_release_generations_lifecycle_check",

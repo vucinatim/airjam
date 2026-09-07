@@ -1,7 +1,7 @@
 # Production Lifecycle Cleanup Proof
 
-Last updated: 2026-08-30
-Status: Gate `G3-02` terminal release-generation and inactive-media cleanup slice implemented and locally proven; production rollout pending
+Last updated: 2026-09-07
+Status: Gate `G3-02` full storage-retention lifecycle implemented and locally proven; production rollout pending
 
 ## Outcome
 
@@ -15,11 +15,39 @@ The implemented retention classes are:
 
 1. failed or abandoned release generations after 24 hours
 2. stale uploads, failed media, and archived unassigned media after 24 hours
+3. superseded unpublished release generations after 180 days of inactivity and
+   at least seven days of creator-visible warning
 
 Media retention begins when the asset fails or is archived. A never-finalized
 upload uses its creation time. The database records and constrains that
 inactivity clock so an old asset archived today does not become immediately
 eligible merely because its upload is old.
+
+Superseded unpublished generations move through one explicit lifecycle:
+`active`, `warned`, `reclaimable`, `deleting`, and `tombstoned`. A ready release
+becomes inactive when it is archived without ever being published, or when a
+newer validated release supersedes it. Existing builds begin their 180-day
+clock conservatively when first observed after rollout rather than being
+backdated from upload time. A late warning always grants a fresh seven days.
+Published generations are outside this lifecycle and are never automatically
+reclaimed.
+
+Creators can export any generation whose cleanup has not started. The
+application service locks the exact generation, verifies ownership, renews a
+warned generation's inactivity window, verifies that the source archive still
+exists, and returns a short-lived signed download target without exposing an
+object key. Dashboard, authenticated API, typed machine API, CLI, and MCP all
+use that same service. The machine commands are:
+
+```bash
+airjam release inspect --release <release-id>
+airjam release export --release <release-id> --generation <generation-id> \
+  --out <archive.zip>
+```
+
+The MCP equivalent is `airjam.release_export`. Local export creates the target
+file atomically and refuses to overwrite an existing archive. Making a warned
+release live also clears its retention clock transactionally.
 
 ## Safety Contract
 
@@ -27,7 +55,12 @@ Cleanup revalidates and locks the resource before touching storage. It refuses
 candidate or promoted release generations, assigned media, active media, and
 resources whose retention deadline has not elapsed. The currently live release
 is therefore outside the eligible state space rather than protected by a
-caller convention.
+caller convention. Superseded cleanup additionally requires persisted
+inactivity, warning, and eligibility timestamps. The executor rechecks all
+three, the promoted-generation relationship, never-published state, and the
+full warning window while holding the generation lock. Publishing and
+exporting use the same lock order, so creator action and cleanup cannot race
+into deletion.
 
 The first attempt inventories the exact bounded object set below the canonical
 resource root and persists the keys, sizes, and ETags on the durable attempt.
@@ -88,6 +121,15 @@ upgraded through `0033`. The job retained its generation identity as
 `resourceKind=release_generation`, and the media inactivity clock was
 backfilled from its last legacy transition timestamp.
 
+Migration `0037_superseded_release_retention.sql` adds the inactivity, warning,
+and eligibility clocks to immutable generations, extends the cleanup index,
+and enforces the lifecycle in PostgreSQL. The constraint permits retention
+state only on ready generations, requires the 180-day inactivity window and
+seven-day warning window, and permits cleanup tombstones for a ready generation
+only when its retention eligibility exists. The migration declares the exact
+operational lanes it affects and the constraint/index checks required by the
+canonical migration lifecycle.
+
 ## Validation
 
 The PostgreSQL contract suite proves:
@@ -99,20 +141,30 @@ The PostgreSQL contract suite proves:
 5. reuse of the first persisted manifest across attempts
 6. survival of an object created after the first cleanup decision
 7. release replay, generation, media-assignment, and worker authority invariants
+8. a superseded unpublished release receives one durable warning and no early
+   cleanup job
+9. the warned release becomes eligible only after both retention clocks pass
+10. the cleanup worker archives and tombstones exactly that generation
+11. an unauthorized creator cannot export another creator's generation
+12. an authorized export renews retention and clears warning eligibility
+13. publishing a warned generation clears every retention timestamp
 
-Platform typechecking, worker-service tests, CLI discovery, fresh migration,
-and legacy-upgrade proof also pass locally. The full `pnpm check:ci` repository
-gate passes, including canonical-contract checks, all package tests and builds,
-and multiplayer performance sanity. The hermetic platform deployment build also
-passes and contains the generalized operational-worker entrypoint. The slice is
-open for review as stacked pull request `#69`.
+The full migration catalog through `0037` applies successfully to a fresh,
+isolated native PostgreSQL 14 database. The focused real-PostgreSQL retention
+and publish suite passes `6` cases. Platform release, configuration, machine
+projection, SDK/devtools export, and MCP discovery suites pass `44` focused
+cases. Workspace typecheck, lint, canonical guards, and repository contract
+tests pass. The complete `check:batch` gate passes locally under the supported
+Node `22.22.0` runtime, including all CLI, MCP, server, SDK, and platform unit
+and integration suites that do not require an external PostgreSQL target. The
+separate real-PostgreSQL suite above covers the database-authoritative retention
+and publish transitions.
 
 ## Remaining Gate Work
 
-This does not close `G3-02`. Superseded unpublished artifacts still need the
-ratified long retention window and creator-visible warning state. Realtime
-global admission, overload drills, and explicit production migration and
-worker rollout also remain. A read-only Railway inspection on `2026-08-30`
+This does not close `G3-02`. Realtime global admission, overload drills, and
+explicit production migration and worker rollout remain. A read-only Railway
+inspection on `2026-08-30`
 confirmed that both production and pull request `#69` still contain the three
 existing application services plus PostgreSQL, without the new
 `air-jam-platform-worker` service. Cleanup therefore cannot run prematurely,

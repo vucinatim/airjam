@@ -20,6 +20,7 @@ import { getPlatformMachineAuthStatus } from "@air-jam/devtools-core/platform-au
 import { runQualityGate } from "@air-jam/devtools-core/quality";
 import {
   bundleLocalRelease,
+  exportPlatformReleaseGeneration,
   finalizePlatformReleaseGeneration,
   inspectLocalRelease,
   inspectPlatformRelease,
@@ -164,6 +165,13 @@ const RELEASE_UPLOAD_INPUT_SCHEMA = RELEASE_PLATFORM_INPUT_SCHEMA.extend({
 const RELEASE_FINALIZE_INPUT_SCHEMA = RELEASE_PLATFORM_INPUT_SCHEMA.extend({
   releaseId: z.string().min(1),
   generationId: z.string().min(1),
+});
+
+const RELEASE_EXPORT_INPUT_SCHEMA = RELEASE_PLATFORM_INPUT_SCHEMA.extend({
+  releaseId: z.string().min(1),
+  generationId: z.string().min(1),
+  cwd: z.string().optional(),
+  out: z.string().optional(),
 });
 
 const RELEASE_PUBLISH_INPUT_SCHEMA = RELEASE_PLATFORM_INPUT_SCHEMA.extend({
@@ -416,6 +424,30 @@ export const buildToolDefinitions = ({
             platformUrl,
             releaseId,
             generationId,
+          }),
+        ),
+    },
+    "airjam.release_export": {
+      description:
+        "Download one exact immutable hosted release generation without overwriting an existing local archive.",
+      inputSchema: RELEASE_EXPORT_INPUT_SCHEMA,
+      execution: {
+        taskSupport: "required",
+      },
+      run: async ({
+        platformUrl,
+        releaseId,
+        generationId,
+        cwd,
+        out,
+      }: z.infer<typeof RELEASE_EXPORT_INPUT_SCHEMA>) =>
+        withJsonText(
+          await exportPlatformReleaseGeneration({
+            platformUrl,
+            releaseId,
+            generationId,
+            cwd,
+            out,
           }),
         ),
     },

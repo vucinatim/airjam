@@ -4,9 +4,9 @@
 export const PLATFORM_SCHEMA_CONTRACT_VERSION = 1 as const;
 
 export const platformSchemaHead = {
-  tag: "0036_canonical_production_migration_lifecycle",
-  createdAt: 1788493929558,
-  hash: "6c1da404a77e016c7e431b8694d153a1c9b00e806f03bcceea4fd312fd72da20",
+  tag: "0037_superseded_release_retention",
+  createdAt: 1788811565297,
+  hash: "cc8f848ab77133731a32e43abaa66d763d5dc292aec50505830b940f4a1cb00e",
   catalogDigest:
-    "4b5b680679bfc0316146e82acbc7df3ea39a077c94f4e4ab34d9b20e3a201020",
+    "c0a38716861810d7261a710a219a427146692035e59ca94d4041885d45748667",
 } as const;

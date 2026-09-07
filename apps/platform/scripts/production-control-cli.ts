@@ -1066,6 +1066,7 @@ const main = async (): Promise<void> => {
           idempotencyKey: input.idempotencyKey,
           limit: input.limit,
           observedAt: inspection.observedAt,
+          retentionTransitions: inspection.retentionTransitions,
           candidates: inspection.candidates.map(redactCandidate),
         };
         if (input.json) printJson(input.command, false, result);
@@ -1077,6 +1078,11 @@ const main = async (): Promise<void> => {
           console.log(
             `Would schedule ${inspection.candidates.length} lifecycle cleanup jobs covering ${bytes} bytes.`,
           );
+          if (inspection.retentionTransitions.length > 0) {
+            console.log(
+              `Would persist ${inspection.retentionTransitions.length} superseded-release retention transitions.`,
+            );
+          }
           console.log("Pass --apply to enqueue durable cleanup jobs.");
         }
         return;
@@ -1090,6 +1096,7 @@ const main = async (): Promise<void> => {
       });
       const result = {
         lifecycleCleanupContractVersion: 1,
+        retentionTransitions: scheduled.retentionTransitions,
         candidates: scheduled.candidates.map(redactCandidate),
         jobs: scheduled.jobs,
         replayed: scheduled.replayed,

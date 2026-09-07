@@ -14,6 +14,7 @@ import type {
   PlatformMachineReleaseJob,
   PlatformMachineRequestOwnedGameMediaUploadTargetInput,
   PlatformMachineRequestOwnedGameMediaUploadTargetResult,
+  PlatformMachineRequestReleaseGenerationExportResult,
   PlatformMachineRequestReleaseUploadTargetResult,
   PlatformMachineUpdateOwnedGameInput,
   PlatformMachineUpdateOwnedGameResult,
@@ -290,6 +291,21 @@ export type FinalizePlatformReleaseGenerationOptions = {
   releaseId: string;
   generationId: string;
 };
+
+export type ExportPlatformReleaseGenerationOptions = {
+  platformUrl?: string;
+  token?: string;
+  releaseId: string;
+  generationId: string;
+  cwd?: string;
+  out?: string;
+};
+
+export type ExportPlatformReleaseGenerationResult =
+  PlatformMachineRequestReleaseGenerationExportResult & {
+    outputFile: string;
+    sizeBytes: number;
+  };
 
 export type SubmitPlatformReleaseOptions = {
   platformUrl?: string;
