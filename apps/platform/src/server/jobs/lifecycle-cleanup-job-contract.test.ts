@@ -18,6 +18,16 @@ describe("lifecycle cleanup job contract", () => {
         plannedAt: "2026-08-30T00:00:00.000Z",
       }),
     ).toMatchObject({ resourceId: "generation-1" });
+    expect(
+      lifecycleCleanupJobPayloadSchema.parse({
+        contractVersion: lifecycleCleanupJobContractVersion,
+        resourceKind: "release_generation",
+        resourceId: "generation-2",
+        retentionClass: "superseded_unpublished_release_180d",
+        eligibleAt: "2026-08-29T00:00:00.000Z",
+        plannedAt: "2026-08-30T00:00:00.000Z",
+      }),
+    ).toMatchObject({ resourceId: "generation-2" });
     expect(() =>
       lifecycleCleanupJobPayloadSchema.parse({
         contractVersion: lifecycleCleanupJobContractVersion,

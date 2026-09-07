@@ -15,6 +15,7 @@ import {
   listReleasesForOperations,
   publishOwnedRelease,
   quarantineReleaseForOperations,
+  requestOwnedReleaseGenerationExport,
   requestOwnedReleaseUploadTarget,
 } from "@/server/releases/release-application-service";
 import { z } from "zod";
@@ -152,6 +153,16 @@ export const releaseRouter = createTRPCRouter({
         generation: result.generation,
         job: result.job,
       };
+    }),
+
+  requestExport: protectedProcedure
+    .input(releaseGenerationMutationInput)
+    .mutation(async ({ input, ctx }) => {
+      return requestOwnedReleaseGenerationExport({
+        actor: { userId: ctx.user.id },
+        releaseId: input.releaseId,
+        generationId: input.generationId,
+      });
     }),
 
   publish: protectedProcedure

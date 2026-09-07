@@ -1804,6 +1804,9 @@ describeWithPostgres("operational job PostgreSQL invariants", () => {
       async createArtifactUploadTarget() {
         throw new Error("Cleanup must not create upload targets.");
       },
+      async createArtifactDownloadTarget() {
+        throw new Error("Cleanup must not create download targets.");
+      },
       async headObject() {
         throw new Error("Cleanup must not inspect objects.");
       },

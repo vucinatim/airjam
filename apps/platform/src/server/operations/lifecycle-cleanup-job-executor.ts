@@ -19,11 +19,15 @@ import {
   lifecycleCleanupJobResultSchema,
   lifecycleCleanupOutputManifestSchema,
   type LifecycleCleanupJobProgress,
+  type LifecycleCleanupRetentionClass,
 } from "../jobs/lifecycle-cleanup-job-contract";
 import { type JobDatabase } from "../jobs/operational-job-internals";
 import { completeOperationalJobInTransaction } from "../jobs/operational-job-service";
 import { resolveDatabaseAuthorityNow } from "./database-authority";
-import { LIFECYCLE_CLEANUP_TERMINAL_RETENTION_MS } from "./lifecycle-cleanup-service";
+import {
+  buildSupersededUnpublishedReleasePredicate,
+  LIFECYCLE_CLEANUP_TERMINAL_RETENTION_MS,
+} from "./lifecycle-cleanup-service";
 
 type CleanupAuthority = Readonly<{
   storageRootKey: string;
@@ -56,12 +60,14 @@ const beginCleanup = async ({
   resourceId,
   gameId,
   releaseId,
+  retentionClass,
 }: {
   database: JobDatabase;
   resourceKind: "release_generation" | "game_media_asset";
   resourceId: string;
   gameId: string;
   releaseId: string | null;
+  retentionClass: LifecycleCleanupRetentionClass;
 }): Promise<CleanupAuthority> =>
   database.transaction(async (tx) => {
     const authorityNow = await resolveDatabaseAuthorityNow(tx);
@@ -90,7 +96,7 @@ const beginCleanup = async ({
         .where(
           and(eq(gameReleases.id, releaseId), eq(gameReleases.gameId, gameId)),
         )
-        .for("share");
+        .for("update");
       if (!generation || !release) {
         throw new LifecycleCleanupExecutionError({
           code: "resource_not_found",
@@ -110,29 +116,80 @@ const beginCleanup = async ({
           alreadyDeletedAt: generation.storageDeletedAt,
         };
       }
-      if (
-        !["failed", "abandoned"].includes(generation.status) ||
-        release.candidateGenerationId === generation.id ||
-        release.promotedGenerationId === generation.id
-      ) {
+      if (retentionClass === "terminal_release_generation_24h") {
+        if (
+          !["failed", "abandoned"].includes(generation.status) ||
+          release.candidateGenerationId === generation.id ||
+          release.promotedGenerationId === generation.id
+        ) {
+          throw new LifecycleCleanupExecutionError({
+            code: "resource_no_longer_eligible",
+            message:
+              "Release generation is active, promoted, or no longer terminal.",
+            stage: "revalidating",
+            retryable: false,
+          });
+        }
+        const terminalAt = generation.failedAt ?? generation.abandonedAt;
+        if (!terminalAt) {
+          throw new LifecycleCleanupExecutionError({
+            code: "resource_no_longer_eligible",
+            message: "Terminal release generation has no terminal timestamp.",
+            stage: "revalidating",
+            retryable: false,
+          });
+        }
+        assertRetentionElapsed({ terminalAt, authorityNow });
+      } else if (retentionClass === "superseded_unpublished_release_180d") {
+        const [retentionAuthority] = await tx
+          .select({ id: gameReleaseGenerations.id })
+          .from(gameReleaseGenerations)
+          .innerJoin(
+            gameReleases,
+            eq(gameReleaseGenerations.releaseId, gameReleases.id),
+          )
+          .where(
+            and(
+              eq(gameReleaseGenerations.id, generation.id),
+              buildSupersededUnpublishedReleasePredicate({ database: tx }),
+            ),
+          )
+          .limit(1);
+        if (
+          !retentionAuthority ||
+          !generation.storageInactiveAt ||
+          !generation.storageRetentionWarnedAt ||
+          !generation.storageRetentionEligibleAt ||
+          generation.storageRetentionEligibleAt.getTime() >
+            authorityNow.getTime()
+        ) {
+          throw new LifecycleCleanupExecutionError({
+            code: "resource_no_longer_eligible",
+            message:
+              "Superseded release storage is active, published, or has not completed its warning window.",
+            stage: "revalidating",
+            retryable: false,
+          });
+        }
+        if (release.status === "ready") {
+          await tx
+            .update(gameReleases)
+            .set({ status: "archived", archivedAt: authorityNow })
+            .where(
+              and(
+                eq(gameReleases.id, release.id),
+                eq(gameReleases.status, "ready"),
+              ),
+            );
+        }
+      } else {
         throw new LifecycleCleanupExecutionError({
           code: "resource_no_longer_eligible",
-          message:
-            "Release generation is active, promoted, or no longer terminal.",
+          message: "Release cleanup retention class is invalid.",
           stage: "revalidating",
           retryable: false,
         });
       }
-      const terminalAt = generation.failedAt ?? generation.abandonedAt;
-      if (!terminalAt) {
-        throw new LifecycleCleanupExecutionError({
-          code: "resource_no_longer_eligible",
-          message: "Terminal release generation has no terminal timestamp.",
-          stage: "revalidating",
-          retryable: false,
-        });
-      }
-      assertRetentionElapsed({ terminalAt, authorityNow });
       if (!generation.storageCleanupStartedAt) {
         await tx
           .update(gameReleaseGenerations)
@@ -252,6 +309,7 @@ export const executeLifecycleCleanupJobAttempt = async ({
     resourceId: payload.resourceId,
     gameId,
     releaseId,
+    retentionClass: payload.retentionClass,
   });
 
   if (authority.alreadyDeletedAt) {

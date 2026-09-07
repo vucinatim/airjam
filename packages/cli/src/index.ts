@@ -30,6 +30,7 @@ import {
 } from "@air-jam/devtools-core/platform-games";
 import {
   bundleLocalRelease,
+  exportPlatformReleaseGeneration,
   finalizePlatformReleaseGeneration,
   inspectLocalRelease,
   inspectPlatformRelease,
@@ -978,6 +979,36 @@ const runReleaseFinalizeCommand = async ({
   );
 };
 
+const runReleaseExportCommand = async ({
+  platformUrl,
+  releaseId,
+  generationId,
+  dir,
+  out,
+}: {
+  platformUrl?: string;
+  releaseId: string;
+  generationId: string;
+  dir?: string;
+  out?: string;
+}) => {
+  const result = await exportPlatformReleaseGeneration({
+    platformUrl,
+    releaseId,
+    generationId,
+    cwd: path.resolve(dir || process.cwd()),
+    out,
+  });
+
+  console.log(kleur.green("\n✓ Hosted release generation exported\n"));
+  console.log(`Release: ${kleur.cyan(releaseId)}`);
+  console.log(
+    `Generation: ${kleur.cyan(result.generation.id)} (#${result.generation.sequence})`,
+  );
+  console.log(`Archive: ${kleur.cyan(result.outputFile)}`);
+  console.log(`Size: ${kleur.cyan(`${result.sizeBytes} bytes`)}`);
+};
+
 const runReleasePublishCommand = async ({
   platformUrl,
   releaseId,
@@ -1571,6 +1602,31 @@ const buildProgram = () => {
       await runReleasePublishCommand({
         platformUrl: resolved.platformUrl,
         releaseId: resolved.release,
+      });
+    });
+
+  releaseCommand
+    .command("export")
+    .description("Download one exact immutable hosted release generation")
+    .requiredOption("--release <id>", "Hosted release ID")
+    .requiredOption("--generation <id>", "Immutable generation ID")
+    .option("--dir <path>", "Directory used to resolve the output path")
+    .option("--out <path>", "Output archive path; refuses to overwrite")
+    .option("--platform-url <url>", "Hosted Air Jam platform base URL")
+    .action(async (options: unknown) => {
+      const resolved = resolveActionOptions<{
+        platformUrl?: string;
+        release: string;
+        generation: string;
+        dir?: string;
+        out?: string;
+      }>(options);
+      await runReleaseExportCommand({
+        platformUrl: resolved.platformUrl,
+        releaseId: resolved.release,
+        generationId: resolved.generation,
+        dir: resolved.dir,
+        out: resolved.out,
       });
     });
 

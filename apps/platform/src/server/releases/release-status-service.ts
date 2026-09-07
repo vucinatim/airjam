@@ -112,16 +112,27 @@ export const publishReleaseWithDatabase = async ({
       throw new Error("Ready release has no promoted generation.");
     }
 
-    const promotedGeneration = await tx.query.gameReleaseGenerations.findFirst({
-      where: (table, { and, eq }) =>
+    const [promotedGeneration] = await tx
+      .select()
+      .from(gameReleaseGenerations)
+      .where(
         and(
-          eq(table.id, release.promotedGenerationId!),
-          eq(table.releaseId, release.id),
-          eq(table.status, "ready"),
+          eq(gameReleaseGenerations.id, release.promotedGenerationId),
+          eq(gameReleaseGenerations.releaseId, release.id),
+          eq(gameReleaseGenerations.status, "ready"),
         ),
-    });
+      )
+      .for("update");
     if (!promotedGeneration) {
       throw new Error("Promoted release generation is not ready.");
+    }
+    if (
+      promotedGeneration.storageCleanupStartedAt ||
+      promotedGeneration.storageDeletedAt
+    ) {
+      throw new Error(
+        "Release storage cleanup has started and the generation can no longer be published.",
+      );
     }
 
     const now = new Date();
@@ -145,6 +156,15 @@ export const publishReleaseWithDatabase = async ({
         })
         .where(inArray(gameReleases.id, existingLiveReleaseIds));
     }
+
+    await tx
+      .update(gameReleaseGenerations)
+      .set({
+        storageInactiveAt: null,
+        storageRetentionWarnedAt: null,
+        storageRetentionEligibleAt: null,
+      })
+      .where(eq(gameReleaseGenerations.id, promotedGeneration.id));
 
     const [publishedRelease] = await tx
       .update(gameReleases)

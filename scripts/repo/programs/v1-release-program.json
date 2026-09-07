@@ -3,7 +3,7 @@
   "id": "air-jam-1.0",
   "title": "Air Jam 1.0 Release Program",
   "status": "active",
-  "updatedAt": "2026-09-04T09:22:53.828Z",
+  "updatedAt": "2026-09-07T21:35:22.772Z",
   "roadmap": "docs/plans/v1-release-roadmap-plan.md",
   "executionPlan": "docs/plans/v1-release-execution-plan.md",
   "estimate": {
@@ -517,15 +517,16 @@
         "limit and overload tests plus agent-operable control commands"
       ],
       "owner": "/root/g3-controls",
-      "note": "Durable operational jobs and exact resource-scoped cleanup are implemented. Remaining original control scope is warned superseded-artifact retention, realtime admission, overload proof, and spend/kill-switch closure. Production migration lifecycle, operational reliability corrections, evidence retention, and worker activation are separately claimable as G3-06, G4-07, G3-07, and G3-08.",
-      "updatedAt": "2026-09-03T23:06:36.410Z",
+      "note": "Durable operational jobs, exact terminal/media cleanup, and the complete warned superseded-unpublished retention/export lifecycle are implemented and locally proven through fresh PostgreSQL 14 migrations, focused authority tests, full Node 22 batch validation, and Canonicalizer. Remaining G3-02 scope is invisible realtime admission, overload proof, and spend/kill-switch closure; production worker activation remains G3-08.",
+      "updatedAt": "2026-09-07T21:35:22.772Z",
       "evidence": [
         "document:docs/audits/v1-reliability/production-operational-job-worker-proof.md",
         "command:pnpm-test",
         "command:pnpm-build",
         "command:pnpm-check-platform-deploy",
         "document:docs/audits/v1-reliability/production-lifecycle-cleanup-proof.md",
-        "command:pnpm-check-ci"
+        "command:pnpm-check-ci",
+        "command:pnpm-check-batch"
       ]
     },
     {

@@ -7,6 +7,12 @@ import {
   games,
   operationalJobs,
 } from "@/db/schema";
+import {
+  calculateSupersededReleaseEligibleAt,
+  calculateSupersededReleaseWarningAt,
+  SUPERSEDED_RELEASE_RETENTION_MS,
+  SUPERSEDED_RELEASE_WARNING_MS,
+} from "@/lib/releases/release-retention-policy";
 import { buildGameMediaStorageKeys } from "@/server/media/game-media-storage-keys";
 import {
   getReleaseStorage,
@@ -14,7 +20,22 @@ import {
 } from "@/server/releases/release-storage";
 import { buildReleaseGenerationStorageKeys } from "@/server/releases/release-storage-keys";
 import type { OperationalJobResourceKind } from "@air-jam/database-contract";
-import { and, eq, inArray, isNull, lte, notExists, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  exists,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  not,
+  notExists,
+  or,
+  sql,
+} from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import {
   lifecycleCleanupJobContractVersion,
   lifecycleCleanupJobPayloadSchema,
@@ -47,6 +68,35 @@ export type LifecycleCleanupCandidate = Readonly<{
   storageRootKey: string;
 }>;
 
+type LifecycleRetentionTransitionScope = Readonly<{
+  creatorId: string;
+  gameId: string;
+  releaseId: string;
+  generationId: string;
+}>;
+
+export type LifecycleRetentionTransition = LifecycleRetentionTransitionScope &
+  Readonly<
+    | {
+        transition: "inactive";
+        inactiveAt: string;
+        warnedAt: null;
+        eligibleAt: string;
+      }
+    | {
+        transition: "warned";
+        inactiveAt: string;
+        warnedAt: string;
+        eligibleAt: string;
+      }
+    | {
+        transition: "retention_cleared";
+        inactiveAt: null;
+        warnedAt: null;
+        eligibleAt: null;
+      }
+  >;
+
 const assertLimit = (limit: number): void => {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
     throw new OperationalJobConflictError(
@@ -56,14 +106,16 @@ const assertLimit = (limit: number): void => {
 };
 
 const activeCleanupJobFor = ({
+  database,
   resourceKind,
   resourceId,
 }: {
+  database: JobDatabase;
   resourceKind: OperationalJobResourceKind;
   resourceId: typeof gameReleaseGenerations.id | typeof gameMediaAssets.id;
 }) =>
   notExists(
-    db
+    database
       .select({ id: operationalJobs.id })
       .from(operationalJobs)
       .where(
@@ -80,6 +132,312 @@ const activeCleanupJobFor = ({
       ),
   );
 
+const supersedingRelease = alias(gameReleases, "superseding_game_release");
+type RetentionQueryDatabase = Pick<JobDatabase, "select">;
+
+export const buildSupersededUnpublishedReleasePredicate = ({
+  database,
+}: {
+  database: RetentionQueryDatabase;
+}) =>
+  and(
+    eq(gameReleaseGenerations.status, "ready"),
+    eq(gameReleaseGenerations.id, gameReleases.promotedGenerationId),
+    isNull(gameReleases.publishedAt),
+    or(
+      and(
+        eq(gameReleases.status, "archived"),
+        isNotNull(gameReleases.archivedAt),
+      ),
+      and(
+        eq(gameReleases.status, "ready"),
+        exists(
+          database
+            .select({ id: supersedingRelease.id })
+            .from(supersedingRelease)
+            .where(
+              and(
+                eq(supersedingRelease.gameId, gameReleases.gameId),
+                inArray(supersedingRelease.status, ["ready", "live"]),
+                or(
+                  gt(supersedingRelease.createdAt, gameReleases.createdAt),
+                  and(
+                    eq(supersedingRelease.createdAt, gameReleases.createdAt),
+                    gt(supersedingRelease.id, gameReleases.id),
+                  ),
+                ),
+              ),
+            ),
+        ),
+      ),
+    ),
+  );
+
+const supersededReleaseStillRetainable = (database: JobDatabase) =>
+  exists(
+    database
+      .select({ id: gameReleases.id })
+      .from(gameReleases)
+      .where(
+        and(
+          eq(gameReleases.id, gameReleaseGenerations.releaseId),
+          buildSupersededUnpublishedReleasePredicate({ database }),
+        ),
+      ),
+  );
+
+const listSupersededReleaseRetentionRows = async ({
+  database,
+  authorityNow,
+  limit,
+}: {
+  database: JobDatabase;
+  authorityNow: Date;
+  limit: number;
+}) => {
+  const retainable = buildSupersededUnpublishedReleasePredicate({ database });
+  if (!retainable) {
+    throw new Error("Superseded release retention predicate is unavailable.");
+  }
+  const warningCutoff = new Date(
+    authorityNow.getTime() -
+      SUPERSEDED_RELEASE_RETENTION_MS +
+      SUPERSEDED_RELEASE_WARNING_MS,
+  );
+  return database
+    .select({
+      creatorId: games.userId,
+      gameId: gameReleases.gameId,
+      releaseId: gameReleases.id,
+      generationId: gameReleaseGenerations.id,
+      inactiveAt: gameReleaseGenerations.storageInactiveAt,
+      warnedAt: gameReleaseGenerations.storageRetentionWarnedAt,
+      eligibleAt: gameReleaseGenerations.storageRetentionEligibleAt,
+      retainable: sql<boolean>`${retainable}`,
+    })
+    .from(gameReleaseGenerations)
+    .innerJoin(
+      gameReleases,
+      eq(gameReleaseGenerations.releaseId, gameReleases.id),
+    )
+    .innerJoin(games, eq(gameReleases.gameId, games.id))
+    .where(
+      and(
+        isNull(gameReleaseGenerations.storageCleanupStartedAt),
+        isNull(gameReleaseGenerations.storageDeletedAt),
+        or(
+          and(
+            retainable,
+            or(
+              isNull(gameReleaseGenerations.storageInactiveAt),
+              and(
+                isNotNull(gameReleaseGenerations.storageInactiveAt),
+                isNull(gameReleaseGenerations.storageRetentionWarnedAt),
+                lte(gameReleaseGenerations.storageInactiveAt, warningCutoff),
+              ),
+            ),
+          ),
+          and(
+            or(
+              isNotNull(gameReleaseGenerations.storageInactiveAt),
+              isNotNull(gameReleaseGenerations.storageRetentionWarnedAt),
+              isNotNull(gameReleaseGenerations.storageRetentionEligibleAt),
+            ),
+            not(retainable),
+          ),
+        ),
+      ),
+    )
+    .orderBy(asc(gameReleaseGenerations.createdAt))
+    .limit(limit);
+};
+
+export const planSupersededReleaseRetention = async ({
+  database = db,
+  now,
+  limit = 100,
+}: {
+  database?: JobDatabase;
+  now?: Date;
+  limit?: number;
+} = {}): Promise<LifecycleRetentionTransition[]> => {
+  assertLimit(limit);
+  const authorityNow =
+    now ?? (await getOperationalJobAuthorityTime({ database }));
+  const rows = await listSupersededReleaseRetentionRows({
+    database,
+    authorityNow,
+    limit,
+  });
+  const transitions: LifecycleRetentionTransition[] = [];
+
+  for (const row of rows) {
+    if (!row.retainable) {
+      transitions.push({
+        creatorId: row.creatorId,
+        gameId: row.gameId,
+        releaseId: row.releaseId,
+        generationId: row.generationId,
+        transition: "retention_cleared",
+        inactiveAt: null,
+        warnedAt: null,
+        eligibleAt: null,
+      });
+      continue;
+    }
+
+    const inactiveAt = row.inactiveAt ?? authorityNow;
+    const warningDueAt = calculateSupersededReleaseWarningAt(inactiveAt);
+    const shouldWarn =
+      row.warnedAt === null && warningDueAt.getTime() <= authorityNow.getTime();
+    const warnedAt = shouldWarn ? authorityNow : row.warnedAt;
+    const eligibleAt =
+      row.eligibleAt ??
+      calculateSupersededReleaseEligibleAt({
+        inactiveAt,
+        warnedAt: warnedAt ?? warningDueAt,
+      });
+
+    if (!row.inactiveAt) {
+      transitions.push({
+        creatorId: row.creatorId,
+        gameId: row.gameId,
+        releaseId: row.releaseId,
+        generationId: row.generationId,
+        transition: "inactive",
+        inactiveAt: inactiveAt.toISOString(),
+        warnedAt: null,
+        eligibleAt: eligibleAt.toISOString(),
+      });
+    }
+    if (shouldWarn) {
+      transitions.push({
+        creatorId: row.creatorId,
+        gameId: row.gameId,
+        releaseId: row.releaseId,
+        generationId: row.generationId,
+        transition: "warned",
+        inactiveAt: inactiveAt.toISOString(),
+        warnedAt: warnedAt!.toISOString(),
+        eligibleAt: eligibleAt.toISOString(),
+      });
+    }
+  }
+
+  return transitions;
+};
+
+export const applySupersededReleaseRetention = async ({
+  database = db,
+  now,
+  limit = 100,
+}: {
+  database?: JobDatabase;
+  now?: Date;
+  limit?: number;
+} = {}): Promise<LifecycleRetentionTransition[]> => {
+  const transitions = await planSupersededReleaseRetention({
+    database,
+    now,
+    limit,
+  });
+  const appliedTransitions: LifecycleRetentionTransition[] = [];
+  for (const transition of transitions) {
+    if (transition.transition === "inactive") {
+      const applied = await database
+        .update(gameReleaseGenerations)
+        .set({ storageInactiveAt: new Date(transition.inactiveAt) })
+        .where(
+          and(
+            eq(gameReleaseGenerations.id, transition.generationId),
+            isNull(gameReleaseGenerations.storageInactiveAt),
+            isNull(gameReleaseGenerations.storageCleanupStartedAt),
+            isNull(gameReleaseGenerations.storageDeletedAt),
+            supersededReleaseStillRetainable(database),
+          ),
+        )
+        .returning({
+          inactiveAt: gameReleaseGenerations.storageInactiveAt,
+        });
+      const [appliedClock] = applied;
+      if (appliedClock?.inactiveAt) {
+        appliedTransitions.push({
+          ...transition,
+          inactiveAt: appliedClock.inactiveAt.toISOString(),
+          eligibleAt: calculateSupersededReleaseEligibleAt({
+            inactiveAt: appliedClock.inactiveAt,
+            warnedAt: calculateSupersededReleaseWarningAt(
+              appliedClock.inactiveAt,
+            ),
+          }).toISOString(),
+        });
+      }
+      continue;
+    }
+    if (transition.transition === "retention_cleared") {
+      const applied = await database
+        .update(gameReleaseGenerations)
+        .set({
+          storageInactiveAt: null,
+          storageRetentionWarnedAt: null,
+          storageRetentionEligibleAt: null,
+        })
+        .where(
+          and(
+            eq(gameReleaseGenerations.id, transition.generationId),
+            isNull(gameReleaseGenerations.storageCleanupStartedAt),
+            isNull(gameReleaseGenerations.storageDeletedAt),
+            not(supersededReleaseStillRetainable(database)),
+          ),
+        )
+        .returning({ id: gameReleaseGenerations.id });
+      if (applied.length > 0) {
+        appliedTransitions.push(transition);
+      }
+      continue;
+    }
+    const warnedAt = new Date(transition.warnedAt);
+    const applied = await database
+      .update(gameReleaseGenerations)
+      .set({
+        storageRetentionWarnedAt: warnedAt,
+        storageRetentionEligibleAt: new Date(transition.eligibleAt),
+      })
+      .where(
+        and(
+          eq(gameReleaseGenerations.id, transition.generationId),
+          eq(
+            gameReleaseGenerations.storageInactiveAt,
+            new Date(transition.inactiveAt),
+          ),
+          isNull(gameReleaseGenerations.storageRetentionWarnedAt),
+          isNull(gameReleaseGenerations.storageCleanupStartedAt),
+          isNull(gameReleaseGenerations.storageDeletedAt),
+          supersededReleaseStillRetainable(database),
+        ),
+      )
+      .returning({
+        inactiveAt: gameReleaseGenerations.storageInactiveAt,
+        warnedAt: gameReleaseGenerations.storageRetentionWarnedAt,
+        eligibleAt: gameReleaseGenerations.storageRetentionEligibleAt,
+      });
+    const [appliedClock] = applied;
+    if (
+      appliedClock?.inactiveAt &&
+      appliedClock.warnedAt &&
+      appliedClock.eligibleAt
+    ) {
+      appliedTransitions.push({
+        ...transition,
+        inactiveAt: appliedClock.inactiveAt.toISOString(),
+        warnedAt: appliedClock.warnedAt.toISOString(),
+        eligibleAt: appliedClock.eligibleAt.toISOString(),
+      });
+    }
+  }
+  return appliedTransitions;
+};
+
 export const listLifecycleCleanupCandidates = async ({
   database = db,
   now,
@@ -95,7 +453,7 @@ export const listLifecycleCleanupCandidates = async ({
   const cutoff = new Date(
     authorityNow.getTime() - LIFECYCLE_CLEANUP_TERMINAL_RETENTION_MS,
   );
-  const [generationRows, mediaRows] = await Promise.all([
+  const [generationRows, supersededRows, mediaRows] = await Promise.all([
     database
       .select({
         creatorId: games.userId,
@@ -122,6 +480,38 @@ export const listLifecycleCleanupCandidates = async ({
           sql`${gameReleaseGenerations.id} is distinct from ${gameReleases.candidateGenerationId}`,
           sql`${gameReleaseGenerations.id} is distinct from ${gameReleases.promotedGenerationId}`,
           activeCleanupJobFor({
+            database,
+            resourceKind: "release_generation",
+            resourceId: gameReleaseGenerations.id,
+          }),
+        ),
+      )
+      .limit(limit),
+    database
+      .select({
+        creatorId: games.userId,
+        gameId: gameReleases.gameId,
+        releaseId: gameReleases.id,
+        generationId: gameReleaseGenerations.id,
+        eligibleAt: gameReleaseGenerations.storageRetentionEligibleAt,
+      })
+      .from(gameReleaseGenerations)
+      .innerJoin(
+        gameReleases,
+        eq(gameReleaseGenerations.releaseId, gameReleases.id),
+      )
+      .innerJoin(games, eq(gameReleases.gameId, games.id))
+      .where(
+        and(
+          buildSupersededUnpublishedReleasePredicate({ database }),
+          isNotNull(gameReleaseGenerations.storageInactiveAt),
+          isNotNull(gameReleaseGenerations.storageRetentionWarnedAt),
+          isNotNull(gameReleaseGenerations.storageRetentionEligibleAt),
+          lte(gameReleaseGenerations.storageRetentionEligibleAt, authorityNow),
+          isNull(gameReleaseGenerations.storageCleanupStartedAt),
+          isNull(gameReleaseGenerations.storageDeletedAt),
+          activeCleanupJobFor({
+            database,
             resourceKind: "release_generation",
             resourceId: gameReleaseGenerations.id,
           }),
@@ -161,6 +551,7 @@ export const listLifecycleCleanupCandidates = async ({
           ),
           isNull(gameMediaAssignments.assetId),
           activeCleanupJobFor({
+            database,
             resourceKind: "game_media_asset",
             resourceId: gameMediaAssets.id,
           }),
@@ -218,7 +609,30 @@ export const listLifecycleCleanupCandidates = async ({
     };
   });
 
-  return [...generations, ...media]
+  const superseded: LifecycleCleanupCandidate[] = supersededRows.map((row) => {
+    if (!row.eligibleAt) {
+      throw new Error(
+        "Superseded release generation had no retention eligibility timestamp.",
+      );
+    }
+    return {
+      creatorId: row.creatorId,
+      gameId: row.gameId,
+      releaseId: row.releaseId,
+      generationId: row.generationId,
+      resourceKind: "release_generation",
+      resourceId: row.generationId,
+      retentionClass: "superseded_unpublished_release_180d",
+      eligibleAt: row.eligibleAt.toISOString(),
+      storageRootKey: buildReleaseGenerationStorageKeys({
+        gameId: row.gameId,
+        releaseId: row.releaseId,
+        generationId: row.generationId,
+      }).generationRootKey,
+    };
+  });
+
+  return [...generations, ...superseded, ...media]
     .sort((left, right) => left.eligibleAt.localeCompare(right.eligibleAt))
     .slice(0, limit);
 };
@@ -272,10 +686,17 @@ export const scheduleLifecycleCleanup = async ({
     return {
       candidates: (existing.result.candidates ??
         []) as unknown as LifecycleCleanupCandidate[],
+      retentionTransitions: (existing.result.retentionTransitions ??
+        []) as unknown as LifecycleRetentionTransition[],
       jobs: readCommandJobSnapshots(existing),
       replayed: true,
     } as const;
   }
+  const retentionTransitions = await applySupersededReleaseRetention({
+    database,
+    now: authorityNow,
+    limit,
+  });
   const candidates = await listLifecycleCleanupCandidates({
     database,
     now: authorityNow,
@@ -296,6 +717,9 @@ export const scheduleLifecycleCleanup = async ({
       return {
         candidates: (commandState.command.result?.candidates ??
           []) as unknown as LifecycleCleanupCandidate[],
+        retentionTransitions: (commandState.command.result
+          ?.retentionTransitions ??
+          []) as unknown as LifecycleRetentionTransition[],
         jobs: readCommandJobSnapshots(commandState.command),
         replayed: true,
       } as const;
@@ -336,10 +760,15 @@ export const scheduleLifecycleCleanup = async ({
     await completeOperationalJobCommand({
       tx,
       commandId: commandState.command.id,
-      result: { candidates, jobs: snapshots },
+      result: { candidates, retentionTransitions, jobs: snapshots },
       now: authorityNow,
     });
-    return { candidates, jobs: snapshots, replayed: false } as const;
+    return {
+      candidates,
+      retentionTransitions,
+      jobs: snapshots,
+      replayed: false,
+    } as const;
   });
 };
 
@@ -356,13 +785,22 @@ export const inspectLifecycleCleanupCandidates = async ({
 } = {}) => {
   const authorityNow =
     now ?? (await getOperationalJobAuthorityTime({ database }));
+  const retentionTransitions = await planSupersededReleaseRetention({
+    database,
+    now: authorityNow,
+    limit,
+  });
   const candidates = await listLifecycleCleanupCandidates({
     database,
     now: authorityNow,
     limit,
   });
   if (candidates.length === 0) {
-    return { observedAt: authorityNow.toISOString(), candidates: [] } as const;
+    return {
+      observedAt: authorityNow.toISOString(),
+      retentionTransitions,
+      candidates: [],
+    } as const;
   }
   const releaseStorage = storage ?? getReleaseStorage();
   const inspected = [];
@@ -389,6 +827,7 @@ export const inspectLifecycleCleanupCandidates = async ({
   }
   return {
     observedAt: authorityNow.toISOString(),
+    retentionTransitions,
     candidates: inspected,
   } as const;
 };

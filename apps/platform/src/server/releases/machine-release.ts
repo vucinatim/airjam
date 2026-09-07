@@ -13,6 +13,7 @@ import {
   getOwnedRelease,
   listOwnedGameReleases,
   publishOwnedRelease,
+  requestOwnedReleaseGenerationExport,
   requestOwnedReleaseUploadTarget,
 } from "./release-application-service";
 
@@ -45,6 +46,15 @@ const serializeReleaseGenerationForMachine = (
   readyAt: generation.readyAt?.toISOString() ?? null,
   failedAt: generation.failedAt?.toISOString() ?? null,
   abandonedAt: generation.abandonedAt?.toISOString() ?? null,
+  storageRetention: {
+    state: generation.storageRetention.state,
+    inactiveAt: generation.storageRetention.inactiveAt?.toISOString() ?? null,
+    warnedAt: generation.storageRetention.warnedAt?.toISOString() ?? null,
+    eligibleAt: generation.storageRetention.eligibleAt?.toISOString() ?? null,
+    cleanupStartedAt:
+      generation.storageRetention.cleanupStartedAt?.toISOString() ?? null,
+    deletedAt: generation.storageRetention.deletedAt?.toISOString() ?? null,
+  },
 });
 
 export const serializeReleaseForMachine = (release: ReleaseDetails) => {
@@ -299,6 +309,38 @@ export const finalizeReleaseUploadForMachine = async ({
       error instanceof Error
         ? error.message
         : "Release upload could not be finalized.",
+    );
+  }
+};
+
+export const requestReleaseGenerationExportForMachine = async ({
+  releaseId,
+  generationId,
+  userId,
+}: {
+  releaseId: string;
+  generationId: string;
+  userId: string;
+}) => {
+  try {
+    const result = await requestOwnedReleaseGenerationExport({
+      actor: { userId },
+      releaseId,
+      generationId,
+    });
+    return {
+      generation: serializeReleaseGenerationForMachine(result.generation),
+      download: result.download,
+    };
+  } catch (error) {
+    rethrowMachineNotFound(
+      error,
+      `No owned release generation matched "${generationId}".`,
+    );
+    throw toMachineConflictError(
+      error instanceof Error
+        ? error.message
+        : "Release generation could not be exported.",
     );
   }
 };

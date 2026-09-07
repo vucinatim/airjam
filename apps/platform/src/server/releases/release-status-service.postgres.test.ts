@@ -108,6 +108,29 @@ describeWithPostgres("release status PostgreSQL invariants", () => {
   it("serializes concurrent publish commands and rejects a second live row", async () => {
     const { publishReleaseWithDatabase } =
       await import("./release-status-service");
+    const retentionEligibleAt = new Date();
+    const retentionWarnedAt = new Date(
+      retentionEligibleAt.getTime() - 7 * 24 * 60 * 60 * 1_000,
+    );
+    const storageInactiveAt = new Date(
+      retentionEligibleAt.getTime() - 180 * 24 * 60 * 60 * 1_000,
+    );
+    await database
+      .update(schema.gameReleaseGenerations)
+      .set({
+        storageInactiveAt,
+        storageRetentionWarnedAt: retentionWarnedAt,
+        storageRetentionEligibleAt: retentionEligibleAt,
+      })
+      .where(eq(schema.gameReleaseGenerations.releaseId, firstReleaseId));
+    await database
+      .update(schema.gameReleaseGenerations)
+      .set({
+        storageInactiveAt,
+        storageRetentionWarnedAt: retentionWarnedAt,
+        storageRetentionEligibleAt: retentionEligibleAt,
+      })
+      .where(eq(schema.gameReleaseGenerations.releaseId, secondReleaseId));
 
     await Promise.all([
       publishReleaseWithDatabase({
@@ -136,6 +159,15 @@ describeWithPostgres("release status PostgreSQL invariants", () => {
       (release) => release.status === "archived",
     );
     expect(archivedRelease).toBeDefined();
+    const liveGeneration =
+      await database.query.gameReleaseGenerations.findFirst({
+        where: (table, { eq }) => eq(table.releaseId, liveReleases[0]!.id),
+      });
+    expect(liveGeneration).toMatchObject({
+      storageInactiveAt: null,
+      storageRetentionWarnedAt: null,
+      storageRetentionEligibleAt: null,
+    });
 
     await expect(
       database

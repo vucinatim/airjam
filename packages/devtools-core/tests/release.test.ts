@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as yauzl from "yauzl";
 import {
   bundleLocalRelease,
+  exportPlatformReleaseGeneration,
   inspectLocalRelease,
   listPlatformReleaseTargets,
   submitPlatformRelease,
@@ -369,6 +377,168 @@ describe("local release tooling", () => {
     expect(result.games[0]?.slug).toBe("pong");
   });
 
+  it("exports an exact immutable hosted generation without overwriting", async () => {
+    const root = await createTempRoot();
+    const archive = Buffer.from("immutable release archive");
+    const generation = {
+      id: "gen_export",
+      releaseId: "rel_export",
+      sequence: 3,
+      status: "ready" as const,
+      originalFilename: "air-jam-v1.zip",
+      contentType: "application/zip",
+      declaredSizeBytes: archive.length,
+      observedSizeBytes: archive.length,
+      observedContentType: "application/zip",
+      observedEtag: '"etag-export"',
+      observedLastModifiedAt: "2026-04-25T10:05:00.000Z",
+      extractedSizeBytes: 100,
+      fileCount: 4,
+      entryPath: "index.html",
+      contentHash: "content-hash",
+      createdAt: "2026-04-25T10:01:00.000Z",
+      uploadObservedAt: "2026-04-25T10:05:00.000Z",
+      processingStartedAt: "2026-04-25T10:05:30.000Z",
+      readyAt: "2026-04-25T10:06:00.000Z",
+      failedAt: null,
+      abandonedAt: null,
+      storageRetention: {
+        state: "warned" as const,
+        inactiveAt: "2025-10-25T10:06:00.000Z",
+        warnedAt: "2026-04-18T10:06:00.000Z",
+        eligibleAt: "2026-04-25T10:06:00.000Z",
+        cleanupStartedAt: null,
+        deletedAt: null,
+      },
+    };
+    const fetchMock = vi.fn(async (input, init) => {
+      const url = String(input);
+      if (
+        url ===
+        "https://platform.airjam.test/api/cli/releases/rel_export/generations/gen_export/export"
+      ) {
+        expect(init?.method).toBe("POST");
+        return new Response(
+          JSON.stringify({
+            generation,
+            download: {
+              method: "GET",
+              url: "https://downloads.airjam.test/air-jam-v1.zip",
+              filename: "air-jam-v1.zip",
+              expiresAt: "2026-04-25T11:00:00.000Z",
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url === "https://downloads.airjam.test/air-jam-v1.zip") {
+        expect(init?.method).toBe("GET");
+        return new Response(archive, { status: 200 });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await exportPlatformReleaseGeneration({
+      platformUrl: "https://platform.airjam.test",
+      token: "agent-token",
+      releaseId: "rel_export",
+      generationId: "gen_export",
+      cwd: root,
+    });
+
+    expect(result.outputFile).toBe(path.join(root, "air-jam-v1.zip"));
+    expect(await readFile(result.outputFile)).toEqual(archive);
+    const downloadCallsBeforeExistingPath = fetchMock.mock.calls.filter(
+      ([input]) =>
+        String(input) === "https://downloads.airjam.test/air-jam-v1.zip",
+    ).length;
+    await expect(
+      exportPlatformReleaseGeneration({
+        platformUrl: "https://platform.airjam.test",
+        token: "agent-token",
+        releaseId: "rel_export",
+        generationId: "gen_export",
+        cwd: root,
+      }),
+    ).rejects.toThrow(/already exists|EEXIST/u);
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) =>
+          String(input) === "https://downloads.airjam.test/air-jam-v1.zip",
+      ),
+    ).toHaveLength(downloadCallsBeforeExistingPath);
+  });
+
+  it("removes a partial release export when the streamed size is invalid", async () => {
+    const root = await createTempRoot();
+    const outputFile = path.join(root, "truncated.zip");
+    const generation = {
+      id: "gen_truncated",
+      releaseId: "rel_truncated",
+      sequence: 1,
+      status: "ready" as const,
+      originalFilename: "truncated.zip",
+      contentType: "application/zip",
+      declaredSizeBytes: 10,
+      observedSizeBytes: 10,
+      observedContentType: "application/zip",
+      observedEtag: '"etag-truncated"',
+      observedLastModifiedAt: "2026-04-25T10:05:00.000Z",
+      extractedSizeBytes: 10,
+      fileCount: 1,
+      entryPath: "index.html",
+      contentHash: "content-hash",
+      createdAt: "2026-04-25T10:01:00.000Z",
+      uploadObservedAt: "2026-04-25T10:05:00.000Z",
+      processingStartedAt: "2026-04-25T10:05:30.000Z",
+      readyAt: "2026-04-25T10:06:00.000Z",
+      failedAt: null,
+      abandonedAt: null,
+      storageRetention: {
+        state: "active" as const,
+        inactiveAt: null,
+        warnedAt: null,
+        eligibleAt: null,
+        cleanupStartedAt: null,
+        deletedAt: null,
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input) => {
+        if (String(input).includes("/api/cli/releases/")) {
+          return new Response(
+            JSON.stringify({
+              generation,
+              download: {
+                method: "GET",
+                url: "https://downloads.airjam.test/truncated.zip",
+                filename: "truncated.zip",
+                expiresAt: "2026-04-25T11:00:00.000Z",
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(Buffer.from("short"), { status: 200 });
+      }),
+    );
+
+    await expect(
+      exportPlatformReleaseGeneration({
+        platformUrl: "https://platform.airjam.test",
+        token: "agent-token",
+        releaseId: "rel_truncated",
+        generationId: "gen_truncated",
+        cwd: root,
+      }),
+    ).rejects.toThrow(/size mismatch/u);
+    await expect(readFile(outputFile)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("submits and publishes a hosted release through the agent API", async () => {
     const root = await createReleaseFixture();
     const bundled = await bundleLocalRelease({
@@ -417,6 +587,14 @@ describe("local release tooling", () => {
       readyAt: status === "ready" ? "2026-04-25T10:06:00.000Z" : null,
       failedAt: null,
       abandonedAt: null,
+      storageRetention: {
+        state: "active" as const,
+        inactiveAt: null,
+        warnedAt: null,
+        eligibleAt: null,
+        cleanupStartedAt: null,
+        deletedAt: null,
+      },
     });
     const processingJob = ({ status }: { status: "queued" | "succeeded" }) => ({
       id: "job_1",

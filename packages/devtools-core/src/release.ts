@@ -5,6 +5,7 @@ import {
   platformMachineListOwnedGamesResultSchema,
   platformMachineListReleasesResultSchema,
   platformMachinePublishReleaseResultSchema,
+  platformMachineRequestReleaseGenerationExportResultSchema,
   platformMachineRequestReleaseUploadTargetResultSchema,
 } from "@air-jam/sdk/platform-machine";
 import {
@@ -22,6 +23,7 @@ import {
   copyFile,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   rm,
@@ -52,6 +54,8 @@ import type {
   BundleLocalReleaseOptions,
   BundleLocalReleaseResult,
   CommandResult,
+  ExportPlatformReleaseGenerationOptions,
+  ExportPlatformReleaseGenerationResult,
   FinalizePlatformReleaseGenerationOptions,
   InspectLocalReleaseOptions,
   InspectPlatformReleaseOptions,
@@ -557,10 +561,7 @@ const buildArgsByPackageManager = {
   pnpm: ["build"],
   yarn: ["build"],
   bun: ["run", "build"],
-} satisfies Record<
-  Exclude<AirJamPackageManager, "unknown">,
-  readonly string[]
->;
+} satisfies Record<Exclude<AirJamPackageManager, "unknown">, readonly string[]>;
 
 const resolveBuildCommand = (
   packageManager: AirJamPackageManager,
@@ -1417,6 +1418,100 @@ export const finalizePlatformReleaseGeneration = async ({
     token: resolved.token,
     schema: platformMachineFinalizeReleaseUploadResultSchema,
   });
+};
+
+export const exportPlatformReleaseGeneration = async ({
+  platformUrl,
+  token,
+  releaseId,
+  generationId,
+  cwd = process.cwd(),
+  out,
+}: ExportPlatformReleaseGenerationOptions): Promise<ExportPlatformReleaseGenerationResult> => {
+  const resolved = await resolvePlatformMachineAuth({ platformUrl, token });
+  const target = await requestPlatformMachineApi({
+    baseUrl: resolved.baseUrl,
+    pathname: `/api/cli/releases/${encodeURIComponent(releaseId)}/generations/${encodeURIComponent(generationId)}/export`,
+    method: "POST",
+    token: resolved.token,
+    schema: platformMachineRequestReleaseGenerationExportResultSchema,
+  });
+  const expectedSize =
+    target.generation.observedSizeBytes ?? target.generation.declaredSizeBytes;
+  const outputFile = path.resolve(cwd, out ?? target.download.filename);
+  await mkdir(path.dirname(outputFile), { recursive: true });
+  const destination = await open(outputFile, "wx");
+  let sizeBytes = 0;
+  let completed = false;
+  try {
+    const response = await fetch(target.download.url, {
+      method: target.download.method,
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Release generation export failed with status ${response.status}.`,
+      );
+    }
+    if (!response.body) {
+      throw new Error("Release generation export returned no response body.");
+    }
+
+    const reader = response.body.getReader();
+    let streamFinished = false;
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          streamFinished = true;
+          break;
+        }
+        const bytes = Buffer.from(chunk.value);
+        sizeBytes += bytes.length;
+        if (sizeBytes > expectedSize) {
+          throw new Error(
+            `Release generation export size mismatch: expected ${expectedSize} bytes, received more than ${expectedSize} bytes.`,
+          );
+        }
+        let offset = 0;
+        while (offset < bytes.length) {
+          const { bytesWritten } = await destination.write(
+            bytes,
+            offset,
+            bytes.length - offset,
+          );
+          if (bytesWritten === 0) {
+            throw new Error(
+              "Release generation export could not make progress writing the archive.",
+            );
+          }
+          offset += bytesWritten;
+        }
+      }
+    } finally {
+      if (!streamFinished) {
+        await reader.cancel().catch(() => undefined);
+      }
+      reader.releaseLock();
+    }
+    if (sizeBytes !== expectedSize) {
+      throw new Error(
+        `Release generation export size mismatch: expected ${expectedSize} bytes, received ${sizeBytes}.`,
+      );
+    }
+    await destination.sync();
+    completed = true;
+  } finally {
+    await destination.close();
+    if (!completed) {
+      await rm(outputFile, { force: true });
+    }
+  }
+
+  return {
+    ...target,
+    outputFile,
+    sizeBytes,
+  };
 };
 
 export const waitForPlatformReleaseGeneration = async ({

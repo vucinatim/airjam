@@ -139,6 +139,12 @@ deployable drainable process, cleanup and one-cycle CLI operations, and
 enqueue/inspect/wait semantics without claiming that production rollout or the
 rest of Gate `G3-02` is complete.
 
+The lifecycle-cleanup proof records exact retry-safe deletion for temporary
+artifacts and media plus the complete superseded-unpublished lifecycle: a
+180-day inactivity clock, durable seven-day creator warning, safe export and
+retention renewal through dashboard/API/CLI/MCP, and PostgreSQL-enforced
+cleanup eligibility.
+
 The detailed discoverability checklist remains a subordinate launch reference:
 
 1. [plans/discoverability-and-launch-promotion-plan.md](./plans/discoverability-and-launch-promotion-plan.md)
@@ -155,7 +161,8 @@ competing as parallel product architectures.
 The roadmap gates define the product sequence and the readiness manifest derives
 the currently executable queue. The next independent work is:
 
-1. finish Gate `G3-02` artifact-retention, realtime-admission, and overload proof
+1. finish Gate `G3-02` realtime admission and overload proof, then roll out the
+   complete storage-retention lifecycle and operational worker safely
 2. close the remaining ranked Gate 5 security findings after the completed
    `games.air-jam.app` production cutover
 3. project confirmed operational alert keys into maintained GitHub
