@@ -96,7 +96,7 @@ const beginCleanup = async ({
         .where(
           and(eq(gameReleases.id, releaseId), eq(gameReleases.gameId, gameId)),
         )
-        .for("share");
+        .for("update");
       if (!generation || !release) {
         throw new LifecycleCleanupExecutionError({
           code: "resource_not_found",

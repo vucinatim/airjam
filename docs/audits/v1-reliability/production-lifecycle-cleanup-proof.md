@@ -1,6 +1,6 @@
 # Production Lifecycle Cleanup Proof
 
-Last updated: 2026-09-07
+Last updated: 2026-09-08
 Status: Gate `G3-02` full storage-retention lifecycle implemented and locally proven; production rollout pending
 
 ## Outcome
@@ -30,7 +30,9 @@ newer validated release supersedes it. Existing builds begin their 180-day
 clock conservatively when first observed after rollout rather than being
 backdated from upload time. A late warning always grants a fresh seven days.
 Published generations are outside this lifecycle and are never automatically
-reclaimed.
+reclaimed. If a release stops being superseded before cleanup starts, the
+planner clears its retention clock so the creator-facing state returns to
+`active` instead of showing a stale warning.
 
 Creators can export any generation whose cleanup has not started. The
 application service locks the exact generation, verifies ownership, renews a
@@ -45,9 +47,10 @@ airjam release export --release <release-id> --generation <generation-id> \
   --out <archive.zip>
 ```
 
-The MCP equivalent is `airjam.release_export`. Local export creates the target
-file atomically and refuses to overwrite an existing archive. Making a warned
-release live also clears its retention clock transactionally.
+The MCP equivalent is `airjam.release_export`. Local export reserves the target
+without overwrite before downloading, streams the archive with a running size
+check, and removes any partial file if transfer or verification fails. Making a
+warned release live also clears its retention clock transactionally.
 
 ## Safety Contract
 
@@ -59,8 +62,14 @@ caller convention. Superseded cleanup additionally requires persisted
 inactivity, warning, and eligibility timestamps. The executor rechecks all
 three, the promoted-generation relationship, never-published state, and the
 full warning window while holding the generation lock. Publishing and
-exporting use the same lock order, so creator action and cleanup cannot race
-into deletion.
+exporting use the same lock order, and cleanup takes the release write lock up
+front rather than upgrading a shared lock, so creator action and cleanup cannot
+race into deletion or create a lock-upgrade deadlock.
+
+The bounded retention planner selects only rows with a transition currently
+due: a new inactivity clock, a due warning, or stale state to clear. Already
+clocked rows waiting for their 180-day deadline do not occupy the scan window,
+so a large retained backlog cannot starve newer generations indefinitely.
 
 The first attempt inventories the exact bounded object set below the canonical
 resource root and persists the keys, sizes, and ETags on the durable attempt.
@@ -148,12 +157,19 @@ The PostgreSQL contract suite proves:
 11. an unauthorized creator cannot export another creator's generation
 12. an authorized export renews retention and clears warning eligibility
 13. publishing a warned generation clears every retention timestamp
+14. already-clocked rows cannot starve work beyond the bounded scan window
+15. historical archived releases start at first observation rather than being
+    backdated
+16. a release that stops being superseded has stale retention state cleared
+17. streamed CLI export refuses an existing target before transfer and removes
+    partial output after integrity failure
 
 The full migration catalog through `0037` applies successfully to a fresh,
 isolated native PostgreSQL 14 database. The focused real-PostgreSQL retention
-and publish suite passes `6` cases. Platform release, configuration, machine
-projection, SDK/devtools export, and MCP discovery suites pass `44` focused
-cases. Workspace typecheck, lint, canonical guards, and repository contract
+and publish suite passes `9` cases. The devtools release suite passes `10`
+focused cases, with the wider platform release, configuration, machine
+projection, SDK, and MCP coverage owned by the complete batch gate. Workspace
+typecheck, lint, canonical guards, and repository contract
 tests pass. The complete `check:batch` gate passes locally under the supported
 Node `22.22.0` runtime, including all CLI, MCP, server, SDK, and platform unit
 and integration suites that do not require an external PostgreSQL target. The

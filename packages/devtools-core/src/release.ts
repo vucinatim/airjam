@@ -23,6 +23,7 @@ import {
   copyFile,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   rm,
@@ -1435,32 +1436,81 @@ export const exportPlatformReleaseGeneration = async ({
     token: resolved.token,
     schema: platformMachineRequestReleaseGenerationExportResultSchema,
   });
-  const response = await fetch(target.download.url, {
-    method: target.download.method,
-  });
-  if (!response.ok) {
-    throw new Error(
-      `Release generation export failed with status ${response.status}.`,
-    );
-  }
-
-  const archive = Buffer.from(await response.arrayBuffer());
   const expectedSize =
     target.generation.observedSizeBytes ?? target.generation.declaredSizeBytes;
-  if (archive.length !== expectedSize) {
-    throw new Error(
-      `Release generation export size mismatch: expected ${expectedSize} bytes, received ${archive.length}.`,
-    );
-  }
-
   const outputFile = path.resolve(cwd, out ?? target.download.filename);
   await mkdir(path.dirname(outputFile), { recursive: true });
-  await writeFile(outputFile, archive, { flag: "wx" });
+  const destination = await open(outputFile, "wx");
+  let sizeBytes = 0;
+  let completed = false;
+  try {
+    const response = await fetch(target.download.url, {
+      method: target.download.method,
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Release generation export failed with status ${response.status}.`,
+      );
+    }
+    if (!response.body) {
+      throw new Error("Release generation export returned no response body.");
+    }
+
+    const reader = response.body.getReader();
+    let streamFinished = false;
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          streamFinished = true;
+          break;
+        }
+        const bytes = Buffer.from(chunk.value);
+        sizeBytes += bytes.length;
+        if (sizeBytes > expectedSize) {
+          throw new Error(
+            `Release generation export size mismatch: expected ${expectedSize} bytes, received more than ${expectedSize} bytes.`,
+          );
+        }
+        let offset = 0;
+        while (offset < bytes.length) {
+          const { bytesWritten } = await destination.write(
+            bytes,
+            offset,
+            bytes.length - offset,
+          );
+          if (bytesWritten === 0) {
+            throw new Error(
+              "Release generation export could not make progress writing the archive.",
+            );
+          }
+          offset += bytesWritten;
+        }
+      }
+    } finally {
+      if (!streamFinished) {
+        await reader.cancel().catch(() => undefined);
+      }
+      reader.releaseLock();
+    }
+    if (sizeBytes !== expectedSize) {
+      throw new Error(
+        `Release generation export size mismatch: expected ${expectedSize} bytes, received ${sizeBytes}.`,
+      );
+    }
+    await destination.sync();
+    completed = true;
+  } finally {
+    await destination.close();
+    if (!completed) {
+      await rm(outputFile, { force: true });
+    }
+  }
 
   return {
     ...target,
     outputFile,
-    sizeBytes: archive.length,
+    sizeBytes,
   };
 };
 

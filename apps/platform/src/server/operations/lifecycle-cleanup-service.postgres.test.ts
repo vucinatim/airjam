@@ -387,6 +387,218 @@ describeWithPostgres("lifecycle cleanup PostgreSQL authority", () => {
     ]);
   });
 
+  it("does not let already-clocked generations starve newer retention work", async () => {
+    await database
+      .update(schema.gameReleaseGenerations)
+      .set({
+        storageCleanupStartedAt: planningTime,
+        storageDeletedAt: planningTime,
+      })
+      .where(eq(schema.gameReleaseGenerations.id, generationId));
+    await database
+      .update(schema.gameMediaAssets)
+      .set({
+        storageCleanupStartedAt: planningTime,
+        storageDeletedAt: planningTime,
+      })
+      .where(eq(schema.gameMediaAssets.id, mediaId));
+
+    const windowKey = suffix.slice(0, 8);
+    const releases = Array.from({ length: 102 }, (_, index) => ({
+      id: `window_release_${index}_${windowKey}`,
+      gameId,
+      sourceKind: "upload" as const,
+      status: "archived" as const,
+      createdAt: new Date(baseTime.getTime() + index * 60_000),
+      checkedAt: new Date(baseTime.getTime() + index * 60_000),
+    }));
+    const generations = releases.map((release, index) => ({
+      id: `window_generation_${index}_${windowKey}`,
+      releaseId: release.id,
+      sequence: 1,
+      status: "ready" as const,
+      originalFilename: `${index}.zip`,
+      contentType: "application/zip",
+      declaredSizeBytes: 1,
+      zipObjectKey: `games/${gameId}/releases/${release.id}/generations/window_generation_${index}_${windowKey}/source/artifact.zip`,
+      siteRootKey: `games/${gameId}/releases/${release.id}/generations/window_generation_${index}_${windowKey}/site`,
+      observedSizeBytes: 1,
+      observedContentType: "application/zip",
+      extractedSizeBytes: 1,
+      fileCount: 1,
+      entryPath: "index.html",
+      contentHash: index.toString(16).padStart(64, "0"),
+      uploadObservedAt: release.createdAt,
+      processingStartedAt: release.createdAt,
+      readyAt: release.createdAt,
+    }));
+    await database.insert(schema.gameReleases).values(releases);
+    await database.insert(schema.gameReleaseGenerations).values(generations);
+    for (let index = 0; index < releases.length; index += 1) {
+      await database
+        .update(schema.gameReleases)
+        .set({
+          status: "ready",
+          promotedGenerationId: generations[index]!.id,
+        })
+        .where(eq(schema.gameReleases.id, releases[index]!.id));
+    }
+
+    const first = await scheduleLifecycleCleanup({
+      database,
+      actor: "test:lifecycle-cleanup",
+      reason: "Clock the first bounded retention window.",
+      idempotencyKey: `${suffix}:cleanup-window-first`,
+      now: planningTime,
+      limit: 100,
+    });
+    expect(first.retentionTransitions).toHaveLength(100);
+    expect(
+      first.retentionTransitions.every(
+        (transition) => transition.transition === "inactive",
+      ),
+    ).toBe(true);
+
+    const second = await scheduleLifecycleCleanup({
+      database,
+      actor: "test:lifecycle-cleanup",
+      reason: "Clock retention work beyond the first bounded window.",
+      idempotencyKey: `${suffix}:cleanup-window-second`,
+      now: planningTime,
+      limit: 100,
+    });
+    expect(second.retentionTransitions).toEqual([
+      expect.objectContaining({
+        generationId: generations[100]!.id,
+        transition: "inactive",
+      }),
+    ]);
+    const newestSuperseded =
+      await database.query.gameReleaseGenerations.findFirst({
+        where: (table, { eq }) => eq(table.id, generations[100]!.id),
+      });
+    expect(newestSuperseded?.storageInactiveAt?.toISOString()).toBe(
+      planningTime.toISOString(),
+    );
+  });
+
+  it("starts historical archived retention at first observation", async () => {
+    await database
+      .update(schema.gameReleaseGenerations)
+      .set({
+        status: "ready",
+        failedAt: null,
+        siteRootKey: `${generationRoot}/site`,
+        observedSizeBytes: 100,
+        observedContentType: "application/zip",
+        extractedSizeBytes: 100,
+        fileCount: 1,
+        entryPath: "index.html",
+        contentHash: "c".repeat(64),
+        uploadObservedAt: baseTime,
+        processingStartedAt: baseTime,
+        readyAt: baseTime,
+        storageCleanupStartedAt: null,
+        storageDeletedAt: null,
+      })
+      .where(eq(schema.gameReleaseGenerations.id, generationId));
+    await database
+      .update(schema.gameReleases)
+      .set({
+        status: "archived",
+        promotedGenerationId: generationId,
+        archivedAt: baseTime,
+      })
+      .where(eq(schema.gameReleases.id, releaseId));
+    await database
+      .update(schema.gameMediaAssets)
+      .set({
+        storageCleanupStartedAt: planningTime,
+        storageDeletedAt: planningTime,
+      })
+      .where(eq(schema.gameMediaAssets.id, mediaId));
+
+    const scheduled = await scheduleLifecycleCleanup({
+      database,
+      actor: "test:lifecycle-cleanup",
+      reason: "Observe a historical archived release conservatively.",
+      idempotencyKey: `${suffix}:cleanup-historical-first-observation`,
+      now: planningTime,
+    });
+    expect(scheduled.retentionTransitions).toEqual([
+      expect.objectContaining({
+        generationId,
+        transition: "inactive",
+        inactiveAt: planningTime.toISOString(),
+        warnedAt: null,
+      }),
+    ]);
+    expect(scheduled.jobs).toHaveLength(0);
+  });
+
+  it("clears retention state when a generation is no longer superseded", async () => {
+    await database
+      .update(schema.gameReleaseGenerations)
+      .set({
+        status: "ready",
+        failedAt: null,
+        siteRootKey: `${generationRoot}/site`,
+        observedSizeBytes: 100,
+        observedContentType: "application/zip",
+        extractedSizeBytes: 100,
+        fileCount: 1,
+        entryPath: "index.html",
+        contentHash: "d".repeat(64),
+        uploadObservedAt: baseTime,
+        processingStartedAt: baseTime,
+        readyAt: baseTime,
+        storageInactiveAt: baseTime,
+        storageRetentionWarnedAt: planningTime,
+        storageRetentionEligibleAt: new Date(
+          planningTime.getTime() + 7 * 24 * 60 * 60 * 1_000,
+        ),
+      })
+      .where(eq(schema.gameReleaseGenerations.id, generationId));
+    await database
+      .update(schema.gameReleases)
+      .set({
+        status: "ready",
+        promotedGenerationId: generationId,
+        checkedAt: baseTime,
+      })
+      .where(eq(schema.gameReleases.id, releaseId));
+    await database
+      .update(schema.gameMediaAssets)
+      .set({
+        storageCleanupStartedAt: planningTime,
+        storageDeletedAt: planningTime,
+      })
+      .where(eq(schema.gameMediaAssets.id, mediaId));
+
+    const scheduled = await scheduleLifecycleCleanup({
+      database,
+      actor: "test:lifecycle-cleanup",
+      reason: "Clear stale retention state from active storage.",
+      idempotencyKey: `${suffix}:cleanup-retention-cleared`,
+      now: planningTime,
+    });
+    expect(scheduled.retentionTransitions).toEqual([
+      expect.objectContaining({
+        generationId,
+        transition: "retention_cleared",
+        inactiveAt: null,
+        warnedAt: null,
+        eligibleAt: null,
+      }),
+    ]);
+    const generation = await database.query.gameReleaseGenerations.findFirst({
+      where: (table, { eq }) => eq(table.id, generationId),
+    });
+    expect(generation?.storageInactiveAt).toBeNull();
+    expect(generation?.storageRetentionWarnedAt).toBeNull();
+    expect(generation?.storageRetentionEligibleAt).toBeNull();
+  });
+
   it("warns for seven days before reclaiming a superseded unpublished release", async () => {
     await database
       .update(schema.gameReleaseGenerations)

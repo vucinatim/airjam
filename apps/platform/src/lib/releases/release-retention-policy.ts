@@ -1,3 +1,5 @@
+import type { PlatformMachineReleaseStorageRetentionState } from "@air-jam/sdk/platform-machine";
+
 export const SUPERSEDED_RELEASE_RETENTION_DAYS = 180;
 export const SUPERSEDED_RELEASE_WARNING_DAYS = 7;
 
@@ -50,4 +52,3 @@ export const calculateSupersededReleaseEligibleAt = ({
       warnedAt.getTime() + SUPERSEDED_RELEASE_WARNING_MS,
     ),
   );
-import type { PlatformMachineReleaseStorageRetentionState } from "@air-jam/sdk/platform-machine";

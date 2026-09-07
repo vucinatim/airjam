@@ -10,6 +10,8 @@ import {
 import {
   calculateSupersededReleaseEligibleAt,
   calculateSupersededReleaseWarningAt,
+  SUPERSEDED_RELEASE_RETENTION_MS,
+  SUPERSEDED_RELEASE_WARNING_MS,
 } from "@/lib/releases/release-retention-policy";
 import { buildGameMediaStorageKeys } from "@/server/media/game-media-storage-keys";
 import {
@@ -28,6 +30,7 @@ import {
   isNotNull,
   isNull,
   lte,
+  not,
   notExists,
   or,
   sql,
@@ -65,16 +68,34 @@ export type LifecycleCleanupCandidate = Readonly<{
   storageRootKey: string;
 }>;
 
-export type LifecycleRetentionTransition = Readonly<{
+type LifecycleRetentionTransitionScope = Readonly<{
   creatorId: string;
   gameId: string;
   releaseId: string;
   generationId: string;
-  transition: "inactive" | "warned";
-  inactiveAt: string;
-  warnedAt: string | null;
-  eligibleAt: string;
 }>;
+
+export type LifecycleRetentionTransition = LifecycleRetentionTransitionScope &
+  Readonly<
+    | {
+        transition: "inactive";
+        inactiveAt: string;
+        warnedAt: null;
+        eligibleAt: string;
+      }
+    | {
+        transition: "warned";
+        inactiveAt: string;
+        warnedAt: string;
+        eligibleAt: string;
+      }
+    | {
+        transition: "retention_cleared";
+        inactiveAt: null;
+        warnedAt: null;
+        eligibleAt: null;
+      }
+  >;
 
 const assertLimit = (limit: number): void => {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
@@ -167,22 +188,32 @@ const supersededReleaseStillRetainable = (database: JobDatabase) =>
 
 const listSupersededReleaseRetentionRows = async ({
   database,
+  authorityNow,
   limit,
 }: {
   database: JobDatabase;
+  authorityNow: Date;
   limit: number;
-}) =>
-  database
+}) => {
+  const retainable = buildSupersededUnpublishedReleasePredicate({ database });
+  if (!retainable) {
+    throw new Error("Superseded release retention predicate is unavailable.");
+  }
+  const warningCutoff = new Date(
+    authorityNow.getTime() -
+      SUPERSEDED_RELEASE_RETENTION_MS +
+      SUPERSEDED_RELEASE_WARNING_MS,
+  );
+  return database
     .select({
       creatorId: games.userId,
       gameId: gameReleases.gameId,
       releaseId: gameReleases.id,
-      releaseStatus: gameReleases.status,
-      archivedAt: gameReleases.archivedAt,
       generationId: gameReleaseGenerations.id,
       inactiveAt: gameReleaseGenerations.storageInactiveAt,
       warnedAt: gameReleaseGenerations.storageRetentionWarnedAt,
       eligibleAt: gameReleaseGenerations.storageRetentionEligibleAt,
+      retainable: sql<boolean>`${retainable}`,
     })
     .from(gameReleaseGenerations)
     .innerJoin(
@@ -194,11 +225,32 @@ const listSupersededReleaseRetentionRows = async ({
       and(
         isNull(gameReleaseGenerations.storageCleanupStartedAt),
         isNull(gameReleaseGenerations.storageDeletedAt),
-        buildSupersededUnpublishedReleasePredicate({ database }),
+        or(
+          and(
+            retainable,
+            or(
+              isNull(gameReleaseGenerations.storageInactiveAt),
+              and(
+                isNotNull(gameReleaseGenerations.storageInactiveAt),
+                isNull(gameReleaseGenerations.storageRetentionWarnedAt),
+                lte(gameReleaseGenerations.storageInactiveAt, warningCutoff),
+              ),
+            ),
+          ),
+          and(
+            or(
+              isNotNull(gameReleaseGenerations.storageInactiveAt),
+              isNotNull(gameReleaseGenerations.storageRetentionWarnedAt),
+              isNotNull(gameReleaseGenerations.storageRetentionEligibleAt),
+            ),
+            not(retainable),
+          ),
+        ),
       ),
     )
     .orderBy(asc(gameReleaseGenerations.createdAt))
     .limit(limit);
+};
 
 export const planSupersededReleaseRetention = async ({
   database = db,
@@ -212,11 +264,29 @@ export const planSupersededReleaseRetention = async ({
   assertLimit(limit);
   const authorityNow =
     now ?? (await getOperationalJobAuthorityTime({ database }));
-  const rows = await listSupersededReleaseRetentionRows({ database, limit });
+  const rows = await listSupersededReleaseRetentionRows({
+    database,
+    authorityNow,
+    limit,
+  });
   const transitions: LifecycleRetentionTransition[] = [];
 
   for (const row of rows) {
-    const inactiveAt = row.inactiveAt ?? row.archivedAt ?? authorityNow;
+    if (!row.retainable) {
+      transitions.push({
+        creatorId: row.creatorId,
+        gameId: row.gameId,
+        releaseId: row.releaseId,
+        generationId: row.generationId,
+        transition: "retention_cleared",
+        inactiveAt: null,
+        warnedAt: null,
+        eligibleAt: null,
+      });
+      continue;
+    }
+
+    const inactiveAt = row.inactiveAt ?? authorityNow;
     const warningDueAt = calculateSupersededReleaseWarningAt(inactiveAt);
     const shouldWarn =
       row.warnedAt === null && warningDueAt.getTime() <= authorityNow.getTime();
@@ -304,7 +374,29 @@ export const applySupersededReleaseRetention = async ({
       }
       continue;
     }
-    const warnedAt = new Date(transition.warnedAt!);
+    if (transition.transition === "retention_cleared") {
+      const applied = await database
+        .update(gameReleaseGenerations)
+        .set({
+          storageInactiveAt: null,
+          storageRetentionWarnedAt: null,
+          storageRetentionEligibleAt: null,
+        })
+        .where(
+          and(
+            eq(gameReleaseGenerations.id, transition.generationId),
+            isNull(gameReleaseGenerations.storageCleanupStartedAt),
+            isNull(gameReleaseGenerations.storageDeletedAt),
+            not(supersededReleaseStillRetainable(database)),
+          ),
+        )
+        .returning({ id: gameReleaseGenerations.id });
+      if (applied.length > 0) {
+        appliedTransitions.push(transition);
+      }
+      continue;
+    }
+    const warnedAt = new Date(transition.warnedAt);
     const applied = await database
       .update(gameReleaseGenerations)
       .set({
