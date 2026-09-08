@@ -470,10 +470,10 @@ const main = async () => {
     if (
       workerRailwayConfig.deploy?.startCommand !==
         "node /app/apps/platform/run-operational-job-worker.mjs" ||
-      workerRailwayConfig.deploy?.healthcheckPath !== "/health"
+      workerRailwayConfig.deploy?.healthcheckPath !== "/ready"
     ) {
       throw new Error(
-        "Operational-job worker Railway config does not target its bundled entry and health contract.",
+        "Operational-job worker Railway config does not target its bundled entry and readiness contract.",
       );
     }
 

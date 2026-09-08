@@ -212,6 +212,33 @@ Configure these reliability values on the operational worker:
 4. `AIRJAM_SYNTHETIC_BROWSER_WORKER_ORIGIN` pointing to the browser worker
 5. `AIRJAM_SYNTHETIC_APP_ID` when the platform app identity is not appropriate
 
+The same worker is the sole continuous Railway budget-evidence collector.
+Configure `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, and an
+environment-scoped `RAILWAY_PROJECT_TOKEN` as a sealed Railway variable. Do not
+provide an account token fallback, and do not expose this token to PR preview
+services. Production enables collection automatically, runs once at startup,
+then every 15 minutes with database-coordinated due skipping. Railway must use
+the worker's `/ready` endpoint: it remains unavailable for missing or stale
+persisted evidence, while a transient provider failure does not disrupt
+readiness when retained evidence is still fresh.
+
+Roll this authority out in dependency order:
+
+1. verify the existing operational-budget migrations are applied; this feature
+   adds no table or migration
+2. set the exact project/environment ids and sealed project token on the
+   production operational-worker service
+3. deploy the worker and wait for its immediate refresh to make `/ready` return
+   `200`
+4. verify `platform operations budget status --json` reports `fresh`
+5. only then deploy or scale realtime admission that consumes this persisted
+   evidence
+
+Rolling worker overlap is safe: PostgreSQL serializes refresh ownership and the
+second worker re-reads before contacting Railway. During rollback, keep at least
+one budget-refresh-capable worker authoritative; do not replace it with an old
+worker that can only retain evidence until it becomes stale.
+
 Configure the narrow GitHub issue bridge only on that worker, using a
 repository-installed App with repository metadata read and Issues read/write:
 

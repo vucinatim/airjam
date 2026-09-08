@@ -40,11 +40,10 @@ import {
   inspectLifecycleCleanupCandidates,
   scheduleLifecycleCleanup,
 } from "../src/server/operations/lifecycle-cleanup-service";
+import { syncRailwayOperationalBudgetEvidence } from "../src/server/operations/production-budget-refresh-service";
 import {
   findOperationalBudgetEvidenceReplay,
   getOperationalBudgetStatus,
-  previewOperationalBudgetEvidence,
-  recordOperationalBudgetEvidence,
 } from "../src/server/operations/production-budget-service";
 import {
   getOperationalLaneControl,
@@ -60,6 +59,10 @@ import {
   decideOperationalQuotaAdmissionWithDatabase,
   listOperationalQuotaUsage,
 } from "../src/server/operations/production-quota-service";
+import {
+  createRailwayBudgetEvidenceAdapter,
+  resolveRailwayBudgetEvidenceConfig,
+} from "../src/server/operations/railway-budget-evidence-adapter";
 
 type ProductionControlCliInput =
   | { command: "status"; json: boolean }
@@ -155,18 +158,9 @@ type ProductionControlCliInput =
       json: boolean;
     }
   | {
-      command: "budget-replay";
-      provider: string;
-      scopeKind: string;
-      scopeId: string;
-      reason: string;
-      actor: string;
-      idempotencyKey: string;
-      json: true;
-    }
-  | {
       command: "budget-sync";
-      evidence: unknown;
+      projectId: string;
+      environmentId: string;
       reason: string;
       actor: string;
       idempotencyKey: string;
@@ -536,22 +530,11 @@ const parseInput = (raw: string | undefined): ProductionControlCliInput => {
       json,
     };
   }
-  if (input.command === "budget-replay") {
-    return {
-      command: "budget-replay",
-      provider: readRequiredText(input, "provider"),
-      scopeKind: readRequiredText(input, "scopeKind"),
-      scopeId: readRequiredText(input, "scopeId"),
-      reason: readRequiredText(input, "reason"),
-      actor: readRequiredText(input, "actor"),
-      idempotencyKey: readRequiredText(input, "idempotencyKey"),
-      json: true,
-    };
-  }
   if (input.command === "budget-sync") {
     return {
       command: "budget-sync",
-      evidence: input.evidence,
+      projectId: readRequiredText(input, "projectId"),
+      environmentId: readRequiredText(input, "environmentId"),
       reason: readRequiredText(input, "reason"),
       actor: readRequiredText(input, "actor"),
       idempotencyKey: readRequiredText(input, "idempotencyKey"),
@@ -1198,56 +1181,70 @@ const main = async (): Promise<void> => {
       return;
     }
 
-    if (input.command === "budget-replay") {
-      const evidence = await findOperationalBudgetEvidenceReplay({
-        database,
-        input,
-      });
-      const budget = evidence
-        ? await getOperationalBudgetStatus({ database })
-        : null;
-      printJson(evidence ? "budget-sync" : input.command, evidence !== null, {
-        evidence,
-        budget,
-        replayed: evidence !== null,
-      });
-      return;
-    }
-
     if (input.command === "budget-sync") {
-      const operationInput = {
-        evidence: input.evidence,
+      const replayInput = {
+        provider: "railway",
+        scopeKind: "project",
+        scopeId: input.projectId,
         actor: input.actor,
         reason: input.reason,
         idempotencyKey: input.idempotencyKey,
       };
-      if (!input.apply) {
-        const result = await previewOperationalBudgetEvidence({
-          database,
-          input: operationInput,
-        });
-        if (input.json) printJson(input.command, false, result);
+      const replay = await findOperationalBudgetEvidenceReplay({
+        database,
+        input: replayInput,
+      });
+      if (replay) {
+        const result = {
+          evidence: replay,
+          budget: await getOperationalBudgetStatus({ database }),
+          replayed: true,
+        };
+        if (input.json) printJson(input.command, true, result);
         else {
           console.log(
-            `Would record provider budget evidence and derive ${result.status.state ?? "unavailable"} state.`,
+            `Replayed ${replay.provider} budget evidence collected at ${replay.observedAt}.`,
+          );
+        }
+        return;
+      }
+      const adapterConfig = resolveRailwayBudgetEvidenceConfig({
+        env: process.env,
+        projectId: input.projectId,
+        environmentId: input.environmentId,
+      });
+      const result = await syncRailwayOperationalBudgetEvidence({
+        database,
+        collector: createRailwayBudgetEvidenceAdapter(adapterConfig),
+        projectId: input.projectId,
+        actor: input.actor,
+        reason: input.reason,
+        idempotencyKey: input.idempotencyKey,
+        apply: input.apply,
+      });
+      if (result.mode === "preview") {
+        if (input.json) printJson(input.command, false, result.preview);
+        else {
+          console.log(
+            `Would record provider budget evidence and derive ${result.preview.status.state ?? "unavailable"} state.`,
           );
           console.log("Pass --apply to persist this immutable evidence item.");
         }
         return;
       }
-
-      const evidence = await recordOperationalBudgetEvidence({
-        database,
-        input: operationInput,
-      });
-      const budget = await getOperationalBudgetStatus({ database });
-      const result = { evidence, budget, replayed: false };
-      if (input.json) printJson(input.command, true, result);
+      const output = {
+        evidence: result.evidence,
+        budget: result.budget,
+        replayed: result.replayed,
+      };
+      if (input.json) printJson(input.command, true, output);
       else {
         console.log(
-          `Recorded ${evidence.provider} budget evidence at $${(
-            evidence.actualAmountMicrousd / 1_000_000
-          ).toFixed(2)}; derived ${budget.state ?? "unavailable"} state.`,
+          `Recorded ${result.evidence.provider} budget evidence at $${(
+            result.evidence.actualAmountMicrousd / 1_000_000
+          ).toFixed(
+            2,
+          )}; derived ${result.budget.state ?? "unavailable"} state.`,
         );
       }
       return;

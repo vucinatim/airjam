@@ -83,6 +83,8 @@ test("production controls have one persistent schema and one canonical CLI", asy
     repoPlatformCommand,
     controlCli,
     budgetService,
+    budgetRefreshService,
+    railwayBudgetAdapter,
     budgetPolicy,
     quotaPolicy,
     quotaService,
@@ -95,6 +97,12 @@ test("production controls have one persistent schema and one canonical CLI", asy
     readRepoSource("apps/platform/scripts/production-control-cli.ts"),
     readRepoSource(
       "apps/platform/src/server/operations/production-budget-service.ts",
+    ),
+    readRepoSource(
+      "apps/platform/src/server/operations/production-budget-refresh-service.ts",
+    ),
+    readRepoSource(
+      "apps/platform/src/server/operations/railway-budget-evidence-adapter.ts",
     ),
     readRepoSource(
       "apps/platform/src/server/operations/production-budget-policy.ts",
@@ -142,7 +150,11 @@ test("production controls have one persistent schema and one canonical CLI", asy
   assert.match(repoPlatformCommand, /production-control-cli\.ts/u);
   assert.match(controlCli, /listOperationalLaneControls/u);
   assert.match(controlCli, /setOperationalLaneControl/u);
-  assert.match(controlCli, /recordOperationalBudgetEvidence/u);
+  assert.match(controlCli, /syncRailwayOperationalBudgetEvidence/u);
+  assert.doesNotMatch(controlCli, /recordOperationalBudgetEvidence/u);
+  assert.match(budgetRefreshService, /recordOperationalBudgetEvidence/u);
+  assert.match(budgetRefreshService, /RailwayBudgetEvidenceCollector/u);
+  assert.match(railwayBudgetAdapter, /RailwayBudgetEvidenceCollector/u);
   assert.match(controlCli, /listOperationalQuotaUsage/u);
   assert.match(controlCli, /decideOperationalQuotaAdmissionWithDatabase/u);
   assert.match(controlCli, /if \(!input\.apply\)/u);

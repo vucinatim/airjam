@@ -3,9 +3,11 @@ import {
   operationalBudgetCycles,
   operationalBudgetEvidence,
 } from "@/db/schema";
-import type {
-  OperationalBudgetCycleSnapshot,
-  OperationalBudgetEvidenceSnapshot,
+import type { OperationalBudgetEvidenceSnapshot } from "@air-jam/database-contract";
+import {
+  readOperationalBudgetSnapshot,
+  serializeOperationalBudgetCycle,
+  serializeOperationalBudgetEvidence,
 } from "@air-jam/database-contract";
 import {
   assertMatchingOperationalBudgetEvidence,
@@ -41,47 +43,8 @@ export type {
   ReplayOperationalBudgetEvidenceInput,
 } from "./production-budget-policy";
 
-type BudgetQueryDatabase = Pick<typeof db, "query">;
-
-const serializeCycle = (
-  row: typeof operationalBudgetCycles.$inferSelect,
-): OperationalBudgetCycleSnapshot => ({
-  id: row.id,
-  periodStart: row.periodStart.toISOString(),
-  periodEnd: row.periodEnd.toISOString(),
-  profile: row.profile,
-  normalTargetMicrousd: row.normalTargetMicrousd,
-  warningMicrousd: row.warningMicrousd,
-  protectionMicrousd: row.protectionMicrousd,
-  nearCeilingMicrousd: row.nearCeilingMicrousd,
-  ceilingMicrousd: row.ceilingMicrousd,
-  createdAt: row.createdAt.toISOString(),
-});
-
-const serializeEvidence = (
-  row: typeof operationalBudgetEvidence.$inferSelect,
-): OperationalBudgetEvidenceSnapshot => ({
-  id: row.id,
-  idempotencyKey: row.idempotencyKey,
-  cycleId: row.cycleId,
-  contractVersion: row.contractVersion,
-  provider: row.provider,
-  scopeKind: row.scopeKind,
-  scopeId: row.scopeId,
-  scopeName: row.scopeName,
-  scopeMetadata: row.scopeMetadata,
-  currency: row.currency,
-  observedAt: row.observedAt.toISOString(),
-  actualAmountMicrousd: row.actualAmountMicrousd,
-  projectedAmountMicrousd: row.projectedAmountMicrousd,
-  measurements: row.measurements,
-  costBreakdownMicrousd: row.costBreakdownMicrousd,
-  rateCard: row.rateCard,
-  sourceVersion: row.sourceVersion,
-  collectedBy: row.collectedBy,
-  reason: row.reason,
-  createdAt: row.createdAt.toISOString(),
-});
+type BudgetQueryDatabase = Pick<typeof db, "query" | "select">;
+type BudgetDatabase = Pick<typeof db, "query" | "select" | "transaction">;
 
 const getCycleForPeriod = async ({
   database,
@@ -96,7 +59,7 @@ const getCycleForPeriod = async ({
     where: (table, { and, gt, lt }) =>
       and(lt(table.periodStart, periodEnd), gt(table.periodEnd, periodStart)),
   });
-  return row ? serializeCycle(row) : null;
+  return row ? serializeOperationalBudgetCycle(row) : null;
 };
 
 const getEvidenceByIdempotencyKey = async ({
@@ -109,7 +72,7 @@ const getEvidenceByIdempotencyKey = async ({
   const row = await database.query.operationalBudgetEvidence.findFirst({
     where: (table, { eq }) => eq(table.idempotencyKey, idempotencyKey),
   });
-  return row ? serializeEvidence(row) : null;
+  return row ? serializeOperationalBudgetEvidence(row) : null;
 };
 
 const listCycleEvidence = async ({
@@ -122,7 +85,7 @@ const listCycleEvidence = async ({
   const rows = await database.query.operationalBudgetEvidence.findMany({
     where: (table, { eq }) => eq(table.cycleId, cycleId),
   });
-  return rows.map(serializeEvidence);
+  return rows.map(serializeOperationalBudgetEvidence);
 };
 
 export const findOperationalBudgetEvidenceReplay = async ({
@@ -172,19 +135,19 @@ export const getOperationalBudgetStatus = async ({
   database = db,
   asOf = new Date(),
 }: {
-  database?: typeof db;
+  database?: BudgetQueryDatabase;
   asOf?: Date;
 } = {}): Promise<OperationalBudgetStatus> => {
-  const row = await database.query.operationalBudgetCycles.findFirst({
-    where: (table, { and, gt, lte }) =>
-      and(lte(table.periodStart, asOf), gt(table.periodEnd, asOf)),
-    orderBy: (table, { desc }) => [desc(table.periodStart)],
+  const snapshot = await readOperationalBudgetSnapshot({
+    database,
+    tables: { operationalBudgetCycles, operationalBudgetEvidence },
+    asOf,
   });
-  const cycle = row ? serializeCycle(row) : null;
-  const evidence = cycle
-    ? await listCycleEvidence({ database, cycleId: cycle.id })
-    : [];
-  return buildOperationalBudgetStatus({ cycle, evidence, asOf });
+  return buildOperationalBudgetStatus({
+    cycle: snapshot.cycle,
+    evidence: snapshot.evidence,
+    asOf,
+  });
 };
 
 export const previewOperationalBudgetEvidence = async ({
@@ -193,7 +156,7 @@ export const previewOperationalBudgetEvidence = async ({
   now = new Date(),
   evidenceId = "preview",
 }: {
-  database?: typeof db;
+  database?: BudgetQueryDatabase;
   input: RecordOperationalBudgetEvidenceInput;
   now?: Date;
   evidenceId?: string;
@@ -256,7 +219,7 @@ export const recordOperationalBudgetEvidence = async ({
   now = new Date(),
   evidenceId = crypto.randomUUID(),
 }: {
-  database?: typeof db;
+  database?: BudgetDatabase;
   input: RecordOperationalBudgetEvidenceInput;
   now?: Date;
   evidenceId?: string;
@@ -306,7 +269,7 @@ export const recordOperationalBudgetEvidence = async ({
     const cycle =
       existingCycle ??
       (insertedCycle
-        ? serializeCycle(insertedCycle)
+        ? serializeOperationalBudgetCycle(insertedCycle)
         : await getCycleForPeriod({
             database: tx,
             periodStart: normalized.evidence.billingPeriod.start,
@@ -329,7 +292,8 @@ export const recordOperationalBudgetEvidence = async ({
       })
       .onConflictDoNothing()
       .returning();
-    if (insertedEvidence) return serializeEvidence(insertedEvidence);
+    if (insertedEvidence)
+      return serializeOperationalBudgetEvidence(insertedEvidence);
 
     const concurrentReplay = await getEvidenceByIdempotencyKey({
       database: tx,

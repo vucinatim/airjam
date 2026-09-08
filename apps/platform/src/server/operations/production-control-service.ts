@@ -1,7 +1,10 @@
 import { db } from "@/db";
 import { operationalControlEvents, operationalLaneControls } from "@/db/schema";
 import {
+  getDefaultOperationalLaneControl,
   operationalLaneValues,
+  readOperationalLaneControl,
+  serializeOperationalLaneControl,
   type OperationalLane,
   type OperationalLaneControlSnapshot,
   type OperationalLaneMode,
@@ -69,29 +72,7 @@ const normalizeRequiredText = (value: string, label: string): string => {
   return normalized;
 };
 
-const serializeLaneControl = (
-  row: typeof operationalLaneControls.$inferSelect,
-): OperationalLaneControlSnapshot => ({
-  lane: row.lane,
-  mode: row.mode,
-  reason: row.reason,
-  retryAfterSeconds: row.retryAfterSeconds,
-  revision: row.revision,
-  updatedBy: row.updatedBy,
-  updatedAt: row.updatedAt.toISOString(),
-});
-
-export const getDefaultOperationalLaneControl = (
-  lane: OperationalLane,
-): OperationalLaneControlSnapshot => ({
-  lane,
-  mode: "normal",
-  reason: null,
-  retryAfterSeconds: null,
-  revision: 0,
-  updatedBy: null,
-  updatedAt: null,
-});
+export { getDefaultOperationalLaneControl };
 
 export const buildOperationalLaneControlList = (
   rows: (typeof operationalLaneControls.$inferSelect)[],
@@ -100,7 +81,7 @@ export const buildOperationalLaneControlList = (
   return operationalLaneValues.map((lane) => {
     const row = rowsByLane.get(lane);
     return row
-      ? serializeLaneControl(row)
+      ? serializeOperationalLaneControl(row)
       : getDefaultOperationalLaneControl(lane);
   });
 };
@@ -118,16 +99,14 @@ export const getOperationalLaneControl = async ({
   database = db,
   lane,
 }: {
-  database?: typeof db;
+  database?: Pick<typeof db, "select">;
   lane: OperationalLane;
-}): Promise<OperationalLaneControlSnapshot> => {
-  const row = await database.query.operationalLaneControls.findFirst({
-    where: (table, { eq }) => eq(table.lane, lane),
+}): Promise<OperationalLaneControlSnapshot> =>
+  readOperationalLaneControl({
+    database,
+    tables: { operationalLaneControls },
+    lane,
   });
-  return row
-    ? serializeLaneControl(row)
-    : getDefaultOperationalLaneControl(lane);
-};
 
 export const decideOperationalLaneAdmission = ({
   control,
@@ -282,7 +261,7 @@ export const setOperationalLaneControl = async ({
         where: (table, { eq }) => eq(table.lane, normalizedInput.lane),
       });
       const previous = currentRow
-        ? serializeLaneControl(currentRow)
+        ? serializeOperationalLaneControl(currentRow)
         : getDefaultOperationalLaneControl(normalizedInput.lane);
       if (previous.revision !== normalizedInput.expectedRevision) {
         throw new OperationalControlConflictError(
@@ -332,7 +311,7 @@ export const setOperationalLaneControl = async ({
         );
       }
 
-      const next = serializeLaneControl(updatedRow);
+      const next = serializeOperationalLaneControl(updatedRow);
       await tx.insert(operationalControlEvents).values({
         id: eventId,
         idempotencyKey: normalizedInput.idempotencyKey,
