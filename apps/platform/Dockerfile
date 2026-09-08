@@ -53,10 +53,10 @@ COPY games/last-band-standing/package.json      ./games/last-band-standing/
 # (~12K) — copy the whole dir, not just the package.json.
 COPY apps/platform/loader ./apps/platform/loader
 
-# Cache mount id must be `s/<railway-service-id>-<suffix>` so Railway's
-# Metal builder accepts it. The id is hardcoded per service (env vars
-# are not allowed in cache mount ids). Service id below = platform.
-RUN --mount=type=cache,id=s/5966dcb6-88cb-49d6-a1fa-60ca78c533ac-pnpm,target=/root/.local/share/pnpm/store \
+# Omit an explicit cache id so this Dockerfile remains portable across the
+# platform and operational-worker services. Railway scopes the anonymous cache
+# mount to the active build instead of rejecting another service's identity.
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 # ============================================================================

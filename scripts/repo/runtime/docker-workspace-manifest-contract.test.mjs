@@ -146,6 +146,17 @@ test("Node-based production Dockerfiles match the repository runtime floor", () 
   }
 });
 
+test("production Docker cache mounts do not embed provider service identities", () => {
+  for (const dockerfilePath of listDockerfiles(repoRoot)) {
+    const source = fs.readFileSync(path.join(repoRoot, dockerfilePath), "utf8");
+    assert.doesNotMatch(
+      source,
+      /--mount=type=cache,[^\n]*\bid=s\/[0-9a-f-]{36}/u,
+      `${dockerfilePath} must remain reusable across provider services`,
+    );
+  }
+});
+
 test("workspace manifest copies after install do not satisfy the dependency contract", () => {
   const dockerfile = [
     "FROM node AS deps",
