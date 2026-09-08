@@ -24,8 +24,11 @@ There is no second migration registry, hand-written production SQL path, or
 automatic production migration at application startup.
 
 Only loopback database hosts are classified as local. A direct non-loopback
-`DATABASE_URL` is deliberately unclassified and receives the same explicit
-production-authority gates as a production or unclassified Railway target.
+`DATABASE_URL` is deliberately unclassified and may be inspected, but it
+cannot be planned or applied through the production migration lifecycle.
+Production plans require an explicit provider-attested Railway project and
+environment so deployment verification can never become impossible after the
+schema has changed.
 
 ## Migration Policy
 
@@ -79,10 +82,20 @@ The lifecycle is:
    as a GitHub merge commit that contains the source commit without changing
    its tree.
 5. `verify` independently checks the database again and, for production, calls
-   the deployed `/api/readiness` endpoint, requires an explicit exact deployed
-   Git revision, proves that revision contains the reviewed source commit with
-   an identical Git tree, and requires production to report that exact
-   revision. Only then does it restore lanes that the migration paused.
+   the deployed `/api/readiness` endpoint and queries the explicit deployment
+   ID through Railway. It requires that deployment to be the successful current
+   deployment in the exact project and environment, obtains its full Git
+   revision from the provider, and proves that revision contains the reviewed
+   source commit with an identical Git tree. The application must report the
+   same deployment ID and, whenever runtime revision metadata is available, the
+   same revision. Only then does it restore lanes that the migration paused.
+
+Production `plan`, `apply`, and `verify` require one of
+`RAILWAY_PROJECT_TOKEN`, `RAILWAY_API_TOKEN`, or `RAILWAY_TOKEN` in the
+operator environment. Railway CLI login alone is not provider API authority.
+The prerequisite is checked before backup creation and again before apply, so
+an obviously unverifiable production plan cannot mutate the schema or pause a
+lane.
 
 Apply and verify share one PostgreSQL advisory lifecycle lock. This prevents
 concurrent operators from applying the same catalog or restoring the same lane
@@ -121,7 +134,7 @@ Migration runs are durable and unique by plan digest and idempotency key.
 1. retries with the same plan and key replay safely
 2. reuse of either identity for different intent is rejected
 3. apply failures are recorded as `apply_failed`
-4. post-apply or deployed-revision failures are recorded as
+4. post-apply or deployment-evidence failures are recorded as
    `verification_failed`
 5. affected lanes stay paused on every failure after drain begins
 6. verification may be retried after the external condition is repaired
@@ -162,10 +175,15 @@ short:
 4. wait for the merge revision to become current and ready, then fetch `main`
    so that exact merge commit is present in the operator's local Git object
    database
-5. verify with the full 40-character lowercase
-   `--deployed-revision <merge-commit>`; verification also requires the supplied
-   platform origin to identify itself as the canonical non-preview production
-   origin for the plan's provider and environment before it restores lanes
+5. ensure the operator environment still contains a Railway project or API
+   token; `railway login` by itself does not satisfy provider verification
+6. verify with `--deployment-id <provider-deployment>`; verification fetches
+   the exact current successful Railway deployment and full Git revision from
+   the provider, proves that revision contains the reviewed source with an
+   identical tree, and requires the live platform origin to report the same
+   deployment ID before it restores lanes. A Railway rollback may omit the Git
+   revision from application runtime metadata, but only the independently
+   provider-attested exact revision may fill that evidence gap
 
 Do not invoke raw `drizzle-kit migrate`, extract a production URL into a shell,
 or restore lanes manually during the normal path.

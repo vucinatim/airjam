@@ -71,13 +71,51 @@ export const inspectPlatformMigrationDeploymentProvenance = ({
   };
 };
 
-export const matchesPlatformMigrationProductionAuthority = ({
+export const assertPlatformMigrationPlanAuthority = ({
+  authority,
+  databaseTarget,
+  providerCredentialsAvailable,
+}) => {
+  if (databaseTarget.kind === "unclassified") {
+    throw new Error(
+      "Production migration plans require a provider-attested Railway target; pass an explicit --railway-environment instead of a direct non-loopback database URL.",
+    );
+  }
+  const productionRailwayTarget =
+    databaseTarget.kind === "railway" &&
+    (databaseTarget.environmentName === "production" ||
+      databaseTarget.environmentName === null);
+  if (productionRailwayTarget && authority !== "production") {
+    throw new Error(
+      "A production Railway database target requires --authority production.",
+    );
+  }
+  if (authority === "production" && databaseTarget.kind !== "railway") {
+    throw new Error(
+      "Production migration plans require a provider-attested Railway target.",
+    );
+  }
+  if (authority === "production" && !providerCredentialsAvailable) {
+    throw new Error(
+      "Production migration plans require RAILWAY_PROJECT_TOKEN, RAILWAY_API_TOKEN, or RAILWAY_TOKEN for deployment verification.",
+    );
+  }
+};
+
+export const matchesPlatformMigrationProductionOrigin = ({
   platformOrigin,
   requestPolicy,
-  deployment,
-  databaseTarget,
 }) =>
   requestPolicy.platformPublicOrigin === platformOrigin &&
-  !requestPolicy.isRailwayPreviewEnvironment &&
-  deployment.environment === databaseTarget.environmentName &&
-  (databaseTarget.kind !== "railway" || deployment.provider === "railway");
+  !requestPolicy.isRailwayPreviewEnvironment;
+
+export const matchesPlatformMigrationApplicationDeploymentAuthority = ({
+  applicationDeployment,
+  providerAuthority,
+}) =>
+  providerAuthority?.status === "verified" &&
+  applicationDeployment.provider === providerAuthority.provider &&
+  applicationDeployment.environment === providerAuthority.environmentName &&
+  applicationDeployment.deploymentId === providerAuthority.deploymentId &&
+  (applicationDeployment.revision === null ||
+    applicationDeployment.revision === providerAuthority.revision);
