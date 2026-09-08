@@ -150,6 +150,10 @@ export const resolveOperationalSyntheticRuntimeConfig = (
       "platform.docs": new URL("/docs", platformOrigin).toString(),
       "platform.arcade": new URL("/arcade", platformOrigin).toString(),
       "platform.health": new URL("/api/health", platformOrigin).toString(),
+      "platform.readiness": new URL(
+        "/api/readiness",
+        platformOrigin,
+      ).toString(),
       "realtime.health": new URL("/health", realtimeOrigin).toString(),
       "hosted.release": absoluteUrl(env.AIRJAM_SYNTHETIC_HOSTED_RELEASE_URL),
       "worker.ready": workerOrigin

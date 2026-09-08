@@ -14,6 +14,7 @@ const config: OperationalSyntheticRuntimeConfig = {
     "platform.docs": "https://platform.example.test/docs",
     "platform.arcade": "https://platform.example.test/arcade",
     "platform.health": "https://platform.example.test/api/health",
+    "platform.readiness": "https://platform.example.test/api/readiness",
     "realtime.health": "https://realtime.example.test/health",
     "hosted.release": "https://release.example.test/",
     "worker.ready": "https://worker.example.test/ready",
@@ -67,9 +68,11 @@ describe("operational synthetic execution", () => {
   });
 
   it("evaluates HTTP, JSON readiness, hosted HTML, and missing targets safely", async () => {
+    const requestedUrls: string[] = [];
     const healthyFetch = async (input: string | URL | Request) => {
       const url = input.toString();
-      if (url.includes("/api/health")) {
+      requestedUrls.push(url);
+      if (url.includes("/api/readiness")) {
         return Response.json({
           ok: true,
           boundaries: {
@@ -77,6 +80,9 @@ describe("operational synthetic execution", () => {
             optionalProvider: { required: false, status: "unconfigured" },
           },
         });
+      }
+      if (url.includes("/api/health")) {
+        return Response.json({ ok: true });
       }
       if (url.includes("/health") || url.includes("/ready")) {
         return Response.json({ ok: true });
@@ -102,10 +108,19 @@ describe("operational synthetic execution", () => {
       }),
     ).resolves.toMatchObject({ status: "passed" });
     await expect(
+      execute("platform-realtime-health", {
+        fetchImpl: healthyFetch as typeof fetch,
+      }),
+    ).resolves.toMatchObject({ status: "passed" });
+    await expect(
       execute("release-dependencies", {
         fetchImpl: healthyFetch as typeof fetch,
       }),
     ).resolves.toMatchObject({ status: "passed" });
+    expect(requestedUrls).toContain("https://platform.example.test/api/health");
+    expect(requestedUrls).toContain(
+      "https://platform.example.test/api/readiness",
+    );
 
     const missingRelease = await execute("arcade-hosted-release", {
       runtimeConfig: {
@@ -143,7 +158,7 @@ describe("operational synthetic execution", () => {
       failure: {
         code: "synthetic.assertion_failed",
         details: {
-          targetKey: "platform.health",
+          targetKey: "platform.readiness",
           assertion: "dependency_ready",
           httpStatus: 200,
         },
