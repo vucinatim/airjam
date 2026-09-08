@@ -29,6 +29,10 @@ import {
   transitionToSystemFocus,
 } from "../../domain/room-session-domain.js";
 import { createWindowedEventSummary } from "../../logging/create-windowed-event-summary.js";
+import type {
+  RealtimeAdmissionDecision,
+  RealtimeControllerLease,
+} from "../../services/realtime-admission-service.js";
 import type { SocketHandlerContext } from "../socket-handler-context.js";
 
 const PLAYER_COLORS = [
@@ -61,6 +65,7 @@ export const registerControllerHandlers = (
     io,
     socket,
     roomManager,
+    realtimeAdmissionService,
     runtimeUsagePublisher,
     isControllerAuthorizedForRoom,
     hasControllerPrivilegeForRoom,
@@ -68,6 +73,12 @@ export const registerControllerHandlers = (
   } = context;
   const logger = context.logger.child({ component: "controller" });
   let lastServerInputFailLogTime = 0;
+  let controllerAdmissionPending = false;
+  let controllerLifecycleEpoch = 0;
+  let lastAcceptedLeave: Pick<
+    ControllerLeavePayload,
+    "roomId" | "controllerId"
+  > | null = null;
   const controllerInputSummary = createWindowedEventSummary({
     logger,
     event: AIRJAM_DEV_LOG_EVENTS.controller.inputSummary,
@@ -141,6 +152,7 @@ export const registerControllerHandlers = (
   };
 
   socket.on("disconnect", () => {
+    controllerLifecycleEpoch += 1;
     controllerInputSummary.flushAll();
     controllerInputDroppedSummary.flushAll();
   });
@@ -174,169 +186,119 @@ export const registerControllerHandlers = (
     });
   };
 
-  socket.on("controller:join", (payload: ControllerJoinPayload, callback) => {
-    if (
-      context.isRateLimited(
-        "controller-join",
-        context.controllerJoinRateLimitMax,
-      )
-    ) {
-      logControllerEvent(
-        "warn",
-        AIRJAM_DEV_LOG_EVENTS.controller.joinRejected,
-        "Rejected controller join due to socket rate limit",
-        { reason: "rate_limited" },
-      );
-      callback({
-        ok: false,
-        message: "Too many join attempts. Please try again.",
-        code: ErrorCode.SERVICE_UNAVAILABLE,
-      });
-      return;
-    }
-
-    const parsed = controllerJoinSchema.safeParse(payload);
-    if (!parsed.success) {
-      logControllerEvent(
-        "warn",
-        AIRJAM_DEV_LOG_EVENTS.controller.joinRejected,
-        "Rejected controller join with invalid payload",
-        {
-          reason: "invalid_payload",
-          issues: parsed.error.issues,
-        },
-      );
-      callback({
-        ok: false,
-        message: parsed.error.message,
-        code: ErrorCode.INVALID_PAYLOAD,
-      });
-      return;
-    }
-
-    const {
-      roomId,
-      controllerId,
-      deviceId: rawDeviceId,
-      nickname,
-      avatarId,
-      capabilityToken,
-    } = parsed.data;
-    const deviceId = rawDeviceId ?? controllerId;
-    const session = roomManager.getRoom(roomId);
-    if (!session) {
-      logControllerEvent(
-        "warn",
-        AIRJAM_DEV_LOG_EVENTS.controller.joinRejected,
-        "Rejected controller join because room was not found",
-        {
-          roomId,
-          controllerId,
-          reason: "room_not_found",
-        },
-      );
-      callback({
-        ok: false,
-        message: "Room not found",
-        code: ErrorCode.ROOM_NOT_FOUND,
-      });
-      emitError(socket.id, {
-        code: ErrorCode.ROOM_NOT_FOUND,
-        message: "Room not found",
-      });
-      return;
-    }
-
-    const existing = session.controllers.get(controllerId);
-    const isResumedJoin = Boolean(existing);
-    const isResumeCandidate =
-      Boolean(existing) && existing?.deviceId === deviceId;
-    const roomCapability = session.controllerCapability;
-    const hasProvidedCapability = typeof capabilityToken === "string";
-    const capabilityExpired = roomCapability
-      ? isControllerPrivilegedCapabilityExpired(roomCapability)
-      : false;
-    const hasValidCapability =
-      Boolean(roomCapability) &&
-      !capabilityExpired &&
-      roomCapability?.token === capabilityToken;
-
-    if (hasProvidedCapability && !hasValidCapability && !isResumeCandidate) {
-      logControllerEvent(
-        "warn",
-        AIRJAM_DEV_LOG_EVENTS.controller.joinRejected,
-        "Rejected controller join because privileged capability was invalid",
-        {
-          roomId,
-          controllerId,
-          reason: capabilityExpired
-            ? "capability_expired"
-            : "invalid_capability",
-        },
-      );
-      callback({
-        ok: false,
-        message: capabilityExpired
-          ? "Controller link expired. Please re-open it from the host."
-          : "Invalid controller link",
-        code: ErrorCode.UNAUTHORIZED,
-      });
-      return;
-    }
-
-    const previousController = roomManager.getControllerInfo(socket.id);
-    if (
-      previousController &&
-      (previousController.roomId !== roomId ||
-        previousController.controllerId !== controllerId)
-    ) {
-      const previousSession = roomManager.getRoom(previousController.roomId);
-      const previousEntry = previousSession?.controllers.get(
-        previousController.controllerId,
-      );
-      if (previousSession && previousEntry?.socketId === socket.id) {
-        previousSession.controllers.delete(previousController.controllerId);
-        emitControllerLeftNotice(
-          io,
-          previousSession,
-          previousController.controllerId,
+  socket.on(
+    "controller:join",
+    async (payload: ControllerJoinPayload, callback) => {
+      if (
+        context.isRateLimited(
+          "controller-join",
+          context.controllerJoinRateLimitMax,
+        )
+      ) {
+        logControllerEvent(
+          "warn",
+          AIRJAM_DEV_LOG_EVENTS.controller.joinRejected,
+          "Rejected controller join due to socket rate limit",
+          { reason: "rate_limited" },
         );
+        callback({
+          ok: false,
+          message: "Too many join attempts. Please try again.",
+          code: ErrorCode.SERVICE_UNAVAILABLE,
+        });
+        return;
       }
-      roomManager.deleteController(socket.id);
-    }
 
-    if (!existing && session.controllers.size >= session.maxPlayers) {
-      logControllerEvent(
-        "warn",
-        AIRJAM_DEV_LOG_EVENTS.controller.joinRejected,
-        "Rejected controller join because room is full",
-        {
-          roomId,
-          controllerId,
-          reason: "room_full",
-          maxPlayers: session.maxPlayers,
-        },
-      );
-      callback({
-        ok: false,
-        message: "Room full",
-        code: ErrorCode.ROOM_FULL,
-      });
-      emitError(socket.id, {
-        code: ErrorCode.ROOM_FULL,
-        message: "Room is full",
-      });
-      return;
-    }
+      const parsed = controllerJoinSchema.safeParse(payload);
+      if (!parsed.success) {
+        logControllerEvent(
+          "warn",
+          AIRJAM_DEV_LOG_EVENTS.controller.joinRejected,
+          "Rejected controller join with invalid payload",
+          {
+            reason: "invalid_payload",
+            issues: parsed.error.issues,
+          },
+        );
+        callback({
+          ok: false,
+          message: parsed.error.message,
+          code: ErrorCode.INVALID_PAYLOAD,
+        });
+        return;
+      }
 
-    const grantedPrivileges = hasValidCapability
-      ? [...roomCapability!.grants]
-      : existing?.privilegedGrants.length
-        ? [...existing.privilegedGrants]
-        : getDefaultControllerPrivilegedGrants();
-    const resumed = isResumedJoin;
-    if (existing) {
-      if (existing.deviceId !== deviceId) {
+      const {
+        roomId,
+        controllerId,
+        deviceId: rawDeviceId,
+        nickname,
+        avatarId,
+        capabilityToken,
+      } = parsed.data;
+      const deviceId = rawDeviceId ?? controllerId;
+      const session = roomManager.getRoom(roomId);
+      if (!session) {
+        logControllerEvent(
+          "warn",
+          AIRJAM_DEV_LOG_EVENTS.controller.joinRejected,
+          "Rejected controller join because room was not found",
+          {
+            roomId,
+            controllerId,
+            reason: "room_not_found",
+          },
+        );
+        callback({
+          ok: false,
+          message: "Room not found",
+          code: ErrorCode.ROOM_NOT_FOUND,
+        });
+        emitError(socket.id, {
+          code: ErrorCode.ROOM_NOT_FOUND,
+          message: "Room not found",
+        });
+        return;
+      }
+
+      const existing = session.controllers.get(controllerId);
+      const isResumedJoin = Boolean(existing);
+      const isResumeCandidate =
+        Boolean(existing) && existing?.deviceId === deviceId;
+      const roomCapability = session.controllerCapability;
+      const hasProvidedCapability = typeof capabilityToken === "string";
+      const capabilityExpired = roomCapability
+        ? isControllerPrivilegedCapabilityExpired(roomCapability)
+        : false;
+      const hasValidCapability =
+        Boolean(roomCapability) &&
+        !capabilityExpired &&
+        roomCapability?.token === capabilityToken;
+
+      if (hasProvidedCapability && !hasValidCapability && !isResumeCandidate) {
+        logControllerEvent(
+          "warn",
+          AIRJAM_DEV_LOG_EVENTS.controller.joinRejected,
+          "Rejected controller join because privileged capability was invalid",
+          {
+            roomId,
+            controllerId,
+            reason: capabilityExpired
+              ? "capability_expired"
+              : "invalid_capability",
+          },
+        );
+        callback({
+          ok: false,
+          message: capabilityExpired
+            ? "Controller link expired. Please re-open it from the host."
+            : "Invalid controller link",
+          code: ErrorCode.UNAUTHORIZED,
+        });
+        return;
+      }
+
+      if (existing && existing.deviceId !== deviceId) {
         logControllerEvent(
           "warn",
           AIRJAM_DEV_LOG_EVENTS.controller.joinRejected,
@@ -355,125 +317,237 @@ export const registerControllerHandlers = (
         return;
       }
 
-      if (existing.pendingDisconnectTimer) {
-        clearTimeout(existing.pendingDisconnectTimer);
-        existing.pendingDisconnectTimer = undefined;
-      }
-      if (existing.socketId && existing.socketId !== socket.id) {
-        roomManager.deleteController(existing.socketId);
-      }
-    }
+      const previousController = roomManager.getControllerInfo(socket.id);
+      const switchesController =
+        previousController &&
+        (previousController.roomId !== roomId ||
+          previousController.controllerId !== controllerId);
+      const previousSession = switchesController
+        ? roomManager.getRoom(previousController.roomId)
+        : undefined;
+      const previousEntry = switchesController
+        ? previousSession?.controllers.get(previousController.controllerId)
+        : undefined;
+      const replacingLease =
+        previousEntry?.socketId === socket.id
+          ? previousEntry.admissionLease
+          : undefined;
 
-    const colorHex =
-      PLAYER_COLORS[session.controllers.size % PLAYER_COLORS.length];
-    let color: string;
-    try {
-      color = Color(colorHex).hex();
-    } catch {
-      color = Color("#38bdf8").hex();
-    }
+      if (controllerAdmissionPending) {
+        callback({
+          ok: false,
+          message: "A controller join is already in progress. Please retry.",
+          code: ErrorCode.SERVICE_UNAVAILABLE,
+          retryAfterSeconds: 1,
+        });
+        return;
+      }
 
-    let controllerSession = existing;
-    if (controllerSession) {
-      controllerSession.nickname = nickname ?? controllerSession.nickname;
-      controllerSession.connected = true;
-      controllerSession.resumeLeaseExpiresAt = null;
-      controllerSession.socketId = socket.id;
-      controllerSession.privilegedGrants = grantedPrivileges;
-      controllerSession.playerProfile = {
-        ...controllerSession.playerProfile,
-        label:
-          nickname ??
-          controllerSession.nickname ??
-          controllerSession.playerProfile.label,
-        ...(avatarId !== undefined
-          ? { avatarId }
-          : controllerSession.playerProfile.avatarId
-            ? { avatarId: controllerSession.playerProfile.avatarId }
+      controllerAdmissionPending = true;
+      const operationEpoch = controllerLifecycleEpoch;
+      const roomLeaseToken = session.admissionLease.leaseToken;
+      let admission: RealtimeAdmissionDecision<RealtimeControllerLease>;
+      try {
+        admission = await realtimeAdmissionService.admitController({
+          roomLease: session.admissionLease,
+          controllerId,
+          existingLease: existing?.admissionLease,
+          replacingLease,
+        });
+        if (
+          admission.ok &&
+          (!socket.connected ||
+            controllerLifecycleEpoch !== operationEpoch ||
+            roomManager.getRoom(roomId) !== session ||
+            session.admissionLease.leaseToken !== roomLeaseToken ||
+            (existing !== undefined &&
+              (existing.retiredAt !== undefined ||
+                session.controllers.get(controllerId) !== existing)) ||
+            (previousEntry !== undefined &&
+              previousEntry.socketId === socket.id &&
+              previousEntry.retiredAt !== undefined))
+        ) {
+          await realtimeAdmissionService.releaseController(admission.lease);
+          admission = {
+            ok: false,
+            reason: "operation_cancelled",
+            message: "The controller state changed before joining completed.",
+            retryAfterSeconds: null,
+          };
+        }
+      } finally {
+        controllerAdmissionPending = false;
+      }
+      if (!admission.ok) {
+        logControllerEvent(
+          "warn",
+          AIRJAM_DEV_LOG_EVENTS.controller.joinRejected,
+          "Rejected controller join by realtime admission authority",
+          { roomId, controllerId, reason: admission.reason },
+        );
+        callback({
+          ok: false,
+          message: admission.message,
+          code:
+            admission.reason === "room_full"
+              ? ErrorCode.ROOM_FULL
+              : ErrorCode.SERVICE_UNAVAILABLE,
+          ...(admission.retryAfterSeconds
+            ? { retryAfterSeconds: admission.retryAfterSeconds }
             : {}),
-      };
-    } else {
-      const playerProfile: PlayerProfile = {
-        id: controllerId,
-        label: nickname ?? `Player ${session.controllers.size}`,
-        color,
-        ...(avatarId ? { avatarId } : {}),
-      };
+        });
+        return;
+      }
 
-      controllerSession = {
+      if (
+        previousController &&
+        (previousController.roomId !== roomId ||
+          previousController.controllerId !== controllerId)
+      ) {
+        if (previousSession && previousEntry?.socketId === socket.id) {
+          previousEntry.retiredAt = Date.now();
+          previousSession.controllers.delete(previousController.controllerId);
+          emitControllerLeftNotice(
+            io,
+            previousSession,
+            previousController.controllerId,
+          );
+        }
+        roomManager.deleteController(socket.id);
+      }
+
+      const grantedPrivileges = hasValidCapability
+        ? [...roomCapability!.grants]
+        : existing?.privilegedGrants.length
+          ? [...existing.privilegedGrants]
+          : getDefaultControllerPrivilegedGrants();
+      const resumed = isResumedJoin;
+      if (existing) {
+        if (existing.pendingDisconnectTimer) {
+          clearTimeout(existing.pendingDisconnectTimer);
+          existing.pendingDisconnectTimer = undefined;
+        }
+        if (existing.socketId && existing.socketId !== socket.id) {
+          roomManager.deleteController(existing.socketId);
+        }
+      }
+
+      const colorHex =
+        PLAYER_COLORS[session.controllers.size % PLAYER_COLORS.length];
+      let color: string;
+      try {
+        color = Color(colorHex).hex();
+      } catch {
+        color = Color("#38bdf8").hex();
+      }
+
+      let controllerSession = session.controllers.get(controllerId) ?? existing;
+      if (controllerSession) {
+        controllerSession.retiredAt = undefined;
+        controllerSession.nickname = nickname ?? controllerSession.nickname;
+        controllerSession.connected = true;
+        controllerSession.resumeLeaseExpiresAt = null;
+        controllerSession.socketId = socket.id;
+        controllerSession.privilegedGrants = grantedPrivileges;
+        controllerSession.admissionLease = admission.lease;
+        controllerSession.playerProfile = {
+          ...controllerSession.playerProfile,
+          label:
+            nickname ??
+            controllerSession.nickname ??
+            controllerSession.playerProfile.label,
+          ...(avatarId !== undefined
+            ? { avatarId }
+            : controllerSession.playerProfile.avatarId
+              ? { avatarId: controllerSession.playerProfile.avatarId }
+              : {}),
+        };
+        session.controllers.set(controllerId, controllerSession);
+      } else {
+        const playerProfile: PlayerProfile = {
+          id: controllerId,
+          label: nickname ?? `Player ${session.controllers.size}`,
+          color,
+          ...(avatarId ? { avatarId } : {}),
+        };
+
+        controllerSession = {
+          controllerId,
+          deviceId,
+          nickname,
+          socketId: socket.id,
+          connected: true,
+          resumeLeaseExpiresAt: null,
+          playerProfile,
+          privilegedGrants: grantedPrivileges,
+          source: inferControllerSourceFromDeviceId(deviceId),
+          admissionLease: admission.lease,
+        };
+        session.controllers.set(controllerId, controllerSession);
+      }
+
+      roomManager.setController(socket.id, { roomId, controllerId });
+      socket.data.controllerAuthority = {
+        roomId,
         controllerId,
         deviceId,
-        nickname,
-        socketId: socket.id,
-        connected: true,
-        resumeLeaseExpiresAt: null,
-        playerProfile,
+        joinedAt: Date.now(),
         privilegedGrants: grantedPrivileges,
-        source: inferControllerSourceFromDeviceId(deviceId),
       };
-      session.controllers.set(controllerId, controllerSession);
-    }
+      lastAcceptedLeave = null;
+      socket.join(roomId);
 
-    roomManager.setController(socket.id, { roomId, controllerId });
-    socket.data.controllerAuthority = {
-      roomId,
-      controllerId,
-      deviceId,
-      joinedAt: Date.now(),
-      privilegedGrants: grantedPrivileges,
-    };
-    socket.join(roomId);
+      emitControllerJoinedNotice(io, session, controllerSession, { resumed });
 
-    emitControllerJoinedNotice(io, session, controllerSession, { resumed });
+      if (resumed) {
+        logControllerEvent(
+          "info",
+          AIRJAM_DEV_LOG_EVENTS.controller.resumeAccepted,
+          "Controller resumed existing room binding",
+          {
+            roomId,
+            controllerId,
+            nickname: nickname ?? undefined,
+            privilegedGrantCount: grantedPrivileges.length,
+          },
+        );
+      }
 
-    if (resumed) {
       logControllerEvent(
         "info",
-        AIRJAM_DEV_LOG_EVENTS.controller.resumeAccepted,
-        "Controller resumed existing room binding",
+        AIRJAM_DEV_LOG_EVENTS.controller.joinAccepted,
+        "Controller joined room",
         {
           roomId,
           controllerId,
           nickname: nickname ?? undefined,
+          resumed,
           privilegedGrantCount: grantedPrivileges.length,
+          hasCapability: hasValidCapability,
         },
       );
-    }
+      runtimeUsagePublisher.publish(
+        createRoomRuntimeUsageEvent(session, {
+          kind: "controller_joined",
+          payload: {
+            controllerId,
+            rejoined: resumed,
+            resumed,
+          },
+        }),
+      );
 
-    logControllerEvent(
-      "info",
-      AIRJAM_DEV_LOG_EVENTS.controller.joinAccepted,
-      "Controller joined room",
-      {
-        roomId,
+      callback({ ok: true, controllerId, roomId, resumed });
+      socket.emit("server:welcome", {
         controllerId,
-        nickname: nickname ?? undefined,
+        roomId,
         resumed,
-        privilegedGrantCount: grantedPrivileges.length,
-        hasCapability: hasValidCapability,
-      },
-    );
-    runtimeUsagePublisher.publish(
-      createRoomRuntimeUsageEvent(session, {
-        kind: "controller_joined",
-        payload: {
-          controllerId,
-          rejoined: resumed,
-          resumed,
-        },
-      }),
-    );
-
-    callback({ ok: true, controllerId, roomId, resumed });
-    socket.emit("server:welcome", {
-      controllerId,
-      roomId,
-      resumed,
-      player: controllerSession.playerProfile,
-      players: listRoomPlayers(session),
-    });
-    socket.emit("server:state", buildRoomStateMessage(roomId, session));
-  });
+        player: controllerSession.playerProfile,
+        players: listRoomPlayers(session),
+      });
+      socket.emit("server:state", buildRoomStateMessage(roomId, session));
+    },
+  );
 
   socket.on(
     "controller:updatePlayerProfile",
@@ -561,7 +635,6 @@ export const registerControllerHandlers = (
         });
         return;
       }
-
       const nextProfile: PlayerProfile = {
         ...controllerSession.playerProfile,
         ...(patch.label !== undefined ? { label: patch.label } : {}),
@@ -598,7 +671,7 @@ export const registerControllerHandlers = (
 
   socket.on(
     "controller:leave",
-    (
+    async (
       payload: ControllerLeavePayload,
       callback: (ack: { ok: boolean; message?: string; code?: string }) => void,
     ) => {
@@ -622,7 +695,14 @@ export const registerControllerHandlers = (
       }
 
       const { roomId, controllerId } = parsed.data;
-      if (!isControllerAuthorizedForRoom(roomId, controllerId)) {
+      const repeatsAcceptedLeave =
+        !socket.data.controllerAuthority &&
+        lastAcceptedLeave?.roomId === roomId &&
+        lastAcceptedLeave.controllerId === controllerId;
+      if (
+        !repeatsAcceptedLeave &&
+        !isControllerAuthorizedForRoom(roomId, controllerId)
+      ) {
         logControllerEvent(
           "warn",
           AIRJAM_DEV_LOG_EVENTS.controller.leaveRejected,
@@ -643,21 +723,21 @@ export const registerControllerHandlers = (
 
       const session = roomManager.getRoom(roomId);
       if (!session) {
+        roomManager.deleteController(socket.id);
+        delete socket.data.controllerAuthority;
+        lastAcceptedLeave = { roomId, controllerId };
+        socket.leave(roomId);
         logControllerEvent(
-          "warn",
-          AIRJAM_DEV_LOG_EVENTS.controller.leaveRejected,
-          "Rejected controller leave because room was not found",
+          "info",
+          AIRJAM_DEV_LOG_EVENTS.controller.leaveAccepted,
+          "Controller leave was already complete",
           {
             roomId,
             controllerId,
-            reason: "room_not_found",
+            alreadyAbsent: true,
           },
         );
-        callback({
-          ok: false,
-          message: "Room not found",
-          code: ErrorCode.ROOM_NOT_FOUND,
-        });
+        callback({ ok: true });
         return;
       }
 
@@ -666,28 +746,41 @@ export const registerControllerHandlers = (
         clearTimeout(controllerSession.pendingDisconnectTimer);
         controllerSession.pendingDisconnectTimer = undefined;
       }
-      session.controllers.delete(controllerId);
+      if (controllerSession) {
+        controllerLifecycleEpoch += 1;
+        controllerSession.retiredAt = Date.now();
+        session.controllers.delete(controllerId);
+      }
       roomManager.deleteController(socket.id);
       delete socket.data.controllerAuthority;
-      emitControllerLeftNotice(io, session, controllerId);
+      lastAcceptedLeave = { roomId, controllerId };
       socket.leave(roomId);
       logControllerEvent(
         "info",
         AIRJAM_DEV_LOG_EVENTS.controller.leaveAccepted,
-        "Controller left room",
+        controllerSession
+          ? "Controller left room"
+          : "Controller leave was already complete",
         {
           roomId,
           controllerId,
+          alreadyAbsent: !controllerSession,
         },
       );
-      runtimeUsagePublisher.publish(
-        createRoomRuntimeUsageEvent(session, {
-          kind: "controller_left",
-          payload: {
-            controllerId,
-          },
-        }),
-      );
+      if (controllerSession) {
+        emitControllerLeftNotice(io, session, controllerId);
+        runtimeUsagePublisher.publish(
+          createRoomRuntimeUsageEvent(session, {
+            kind: "controller_left",
+            payload: {
+              controllerId,
+            },
+          }),
+        );
+        await realtimeAdmissionService.releaseController(
+          controllerSession.admissionLease,
+        );
+      }
       callback({ ok: true });
     },
   );

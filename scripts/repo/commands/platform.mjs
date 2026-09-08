@@ -1395,6 +1395,27 @@ export const registerPlatformCommands = (program) => {
     });
   });
 
+  const realtimeCommand = operationsCommand
+    .command("realtime")
+    .description(
+      "Inspect shared realtime room, controller, and instance admission authority",
+    );
+
+  addPlatformDatabaseTargetOption(
+    realtimeCommand
+      .command("status")
+      .description(
+        "Inspect live admission leases against sustained targets and burst ceilings",
+      )
+      .option("--json", "Print the stable machine-readable contract"),
+  ).action(async (options) => {
+    await runPlatformOperator({
+      script: "scripts/production-control-cli.ts",
+      operation: { command: "realtime-status", json: Boolean(options.json) },
+      options,
+    });
+  });
+
   const laneCommand = operationsCommand
     .command("lane")
     .description("Inspect and mutate one expensive-lane control");

@@ -9,6 +9,7 @@ Related docs:
 2. [../audits/v1-reliability/production-capacity-cost-and-recovery-audit.md](../audits/v1-reliability/production-capacity-cost-and-recovery-audit.md)
 3. [../architecture/platform-control-plane-architecture.md](../architecture/platform-control-plane-architecture.md)
 4. [../architecture/analytics-architecture.md](../architecture/analytics-architecture.md)
+5. [../audits/v1-reliability/production-realtime-admission-proof.md](../audits/v1-reliability/production-realtime-admission-proof.md)
 
 ## Purpose
 
@@ -28,9 +29,10 @@ It does not introduce payments, subscriptions, or a second product tier.
 
 ## Authority
 
-The hosted control plane owns production policy. The realtime server owns live
-room correctness. Workers own bounded execution, never creator-visible product
-state.
+The hosted control plane owns production policy. PostgreSQL owns lightweight
+global admission leases and concurrency counts. The realtime server owns live
+room correctness and gameplay hot state. Workers own bounded execution, never
+creator-visible product state.
 
 All human, HTTP, CLI, MCP, realtime, and worker adapters must call the same
 domain decisions. A transport-local rate limiter may remain as an abuse or
@@ -40,10 +42,11 @@ or budget allowance.
 Authoritative usage comes from:
 
 1. platform lifecycle records for accounts, games, releases, and media
-2. the runtime usage ledger for rooms, controllers, and room-hours
-3. durable job records for queued and executing work
-4. object metadata plus platform records for managed storage
-5. provider usage snapshots for infrastructure cost
+2. shared realtime admission leases for live room and controller concurrency
+3. the runtime usage ledger for completed room/controller activity and room-hours
+4. durable job records for queued and executing work
+5. object metadata plus platform records for managed storage
+6. provider usage snapshots for infrastructure cost
 
 Approximate product telemetry is never quota or billing authority.
 
@@ -357,6 +360,18 @@ current expected revision. Operator projections never expose worker lease
 tokens, request hashes, or raw command, payload, progress, result, error, and
 event-detail JSON. Lease-bearing records remain a separate worker authority.
 
+Shared realtime capacity inspection is:
+
+```bash
+pnpm --silent run repo -- platform operations realtime status --json
+```
+
+It exposes live, draining, and expired instances; active room usage; active and
+resumable controller usage; sustained targets; burst ceilings; and remaining
+burst capacity. It never exposes lease tokens, credentials, or gameplay state. The
+two realtime lane modes continue to use the canonical optimistic, audited lane
+mutation lifecycle rather than a separate realtime control surface.
+
 The complete lifecycle must expose stable JSON for:
 
 1. overall status and policy inspection
@@ -365,6 +380,7 @@ The complete lifecycle must expose stable JSON for:
 4. quota usage and decision explanation
 5. job listing by kind or resource, pause/resume, cancellation, and replay
 6. cleanup preview/apply
+7. realtime instance, room, controller, drain, and capacity inspection
 
 Reads never require dashboard interaction. Mutations require explicit apply,
 idempotency, actor, reason, and optimistic revision where applicable. UI and
@@ -385,10 +401,14 @@ The production-valid implementation sequence is:
 
 Steps 1 through 5 are implemented through the linked budget, quota,
 durable-authority, immutable-generation, and operational-worker proofs. Step 6
-now automatically covers terminal job-attempt outputs, failed or abandoned
-release generations, and stale or inactive unassigned media through exact
-retry-stable manifests. Superseded unpublished artifact warning and long-term
-retention remain open. Steps 7 and 8 remain open.
+now covers terminal job-attempt outputs, failed or abandoned release
+generations, stale or inactive unassigned media, and the complete superseded-
+unpublished warning/export/renewal/retention lifecycle through exact retry-
+stable manifests. That lifecycle is live through PR `#102`, main revision
+`5a30c1a415f64dcc901dcb42b26a6e1df429eb8c`, and migration `0037`. Step 7 is
+implemented and locally exercised on its working branch, but its reviewed
+merge, migration `0038`, and production rollout remain open. Step 8 remains
+open in full.
 
 Each step remains part of the final architecture. No step introduces a
 temporary in-memory queue, transport-only quota, or dashboard-only control.

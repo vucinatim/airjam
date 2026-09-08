@@ -38,6 +38,7 @@ export interface HostRegistrationAck {
   roomId?: RoomCode;
   message?: string;
   code?: ErrorCode | string;
+  retryAfterSeconds?: number;
   /** When reconnecting, present if the room still has a launched game (launch pending or active). */
   arcadeSession?: HostArcadeSessionSnapshot;
   /** Last observed Arcade counters, used to keep a reconnect monotonic. */
@@ -60,6 +61,7 @@ export interface HostBootstrapAck {
 export interface HostSocketAuthority {
   appId?: string;
   gameId?: string;
+  creatorId?: string;
   traceId: string;
   verifiedAt: number;
   verifiedVia?: "appId" | "hostGrant";

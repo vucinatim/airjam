@@ -354,6 +354,8 @@ describeWithPostgres("immutable release generation authority", () => {
     vi.stubEnv("AIRJAM_RELEASES_BROWSER_EXECUTABLE_PATH", "/test/chromium");
     vi.stubEnv("AIRJAM_RELEASES_INTERNAL_ACCESS_TOKEN", "test-secret");
     vi.stubEnv("AIRJAM_RELEASES_IMAGE_MODERATION_MODE", "disabled");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://platform.example");
+    vi.stubEnv("AIRJAM_RELEASES_PUBLIC_ORIGIN", "https://releases.example.net");
     resetReleaseModerationConfigForTests();
     try {
       await expect(

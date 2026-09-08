@@ -89,7 +89,7 @@ ephemeral environment at inspection time.
 | Plane                 | Railway service                  | Production shape              | Public health surface       |
 | --------------------- | -------------------------------- | ----------------------------- | --------------------------- |
 | Product and API       | `air-jam-platform`               | 1 replica, EU West, always on | `/api/health`               |
-| Realtime              | `air-jam-server`                 | 1 replica, EU West, always on | `/health`                   |
+| Realtime              | `air-jam-server`                 | 1 replica, EU West, always on | `/ready`                    |
 | Release checks        | `air-jam-release-browser-worker` | 1 replica, EU West, always on | `/health`                   |
 | Persistence           | Postgres                         | 1 managed database and volume | provider-managed            |
 | Release/media objects | Cloudflare R2                    | external bucket               | no repo-owned capacity read |
@@ -106,9 +106,14 @@ Observed Railway facts:
    topology and its variables unless isolation is enforced separately
 
 One realtime replica is currently an architectural constraint, not simply a
-cost choice. Rooms and admission state are process-local. Increasing replicas
-before introducing explicit room placement or shared authority would create
-incorrect behavior rather than safe capacity.
+cost choice. The 1.0 candidate moves admission and lease authority into
+PostgreSQL, but gameplay and room placement remain process-local. Registration
+allows one accepting instance and drains the incumbent during a replacement;
+that makes deploy handoff safe without pretending multi-replica room routing
+exists. Increasing replicas before introducing explicit room placement would
+therefore create incorrect behavior rather than safe capacity. All realtime
+capacity numbers in this audit are the tested envelope for one accepting
+replica.
 
 ## Cost Baseline
 

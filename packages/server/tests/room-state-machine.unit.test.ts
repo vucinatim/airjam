@@ -34,6 +34,10 @@ const createSession = (): RoomSession => ({
   controllerOrientation: "portrait",
   roomSettings: DEFAULT_ROOM_PLATFORM_SETTINGS,
   lifecycleState: "SYSTEM_IDLE",
+  admissionLease: {
+    roomId: "ABCD",
+    leaseToken: "test-room-lease",
+  },
 });
 
 describe("room session domain lifecycle", () => {

@@ -6,10 +6,13 @@ import {
   gameReleases,
   games,
   operationalJobs,
+  realtimeAdmissionInstances,
+  realtimeRoomAdmissionLeases,
   runtimeUsageGameSegments,
 } from "@/db/schema";
 import {
   operationalQuotaKeyValues,
+  realtimeAdmissionInstanceIsLive,
   type OperationalLane,
   type OperationalQuotaKey,
 } from "@air-jam/database-contract";
@@ -38,7 +41,8 @@ import {
 
 const ROLLING_30_DAYS_MS = 30 * 24 * 60 * 60 * 1_000;
 
-type QuotaDatabase = typeof db;
+type QuotaDatabase = Pick<typeof db, "query" | "select">;
+type QuotaTransactionalDatabase = Pick<typeof db, "transaction">;
 
 export class OperationalQuotaScopeError extends Error {
   constructor(message: string) {
@@ -96,33 +100,6 @@ const assertOwnedGame = async ({
       "Game was not found in the requested creator scope.",
     );
   }
-};
-
-const unavailableUsage = ({
-  key,
-  scopeId,
-  observedAt,
-  reason,
-}: {
-  key: OperationalQuotaKey;
-  scopeId: string;
-  observedAt: Date;
-  reason: string;
-}): OperationalQuotaUsageSnapshot => {
-  const policy = OPERATIONAL_QUOTA_POLICIES[key];
-  return {
-    key,
-    scope: { kind: policy.scopeKind, id: scopeId },
-    authorityStatus: "unavailable",
-    authorityReason: reason,
-    current: null,
-    limit: policy.limit,
-    remaining: null,
-    unit: policy.unit,
-    window: policy.window,
-    observedAt: observedAt.toISOString(),
-    resetAt: null,
-  };
 };
 
 const availableUsage = ({
@@ -298,6 +275,44 @@ const loadConcurrentReleaseJobs = async ({
   return toSafeNonNegativeInteger(row?.current, "Concurrent release jobs");
 };
 
+const loadConcurrentRooms = async ({
+  database,
+  creatorId,
+  gameId,
+  now,
+}: {
+  database: QuotaDatabase;
+  creatorId: string;
+  gameId?: string;
+  now: Date;
+}): Promise<number> => {
+  const [row] = await database
+    .select({ current: count() })
+    .from(realtimeRoomAdmissionLeases)
+    .innerJoin(
+      realtimeAdmissionInstances,
+      and(
+        eq(
+          realtimeRoomAdmissionLeases.instanceId,
+          realtimeAdmissionInstances.instanceId,
+        ),
+        realtimeAdmissionInstanceIsLive(
+          realtimeAdmissionInstances.expiresAt,
+          now,
+        ),
+      ),
+    )
+    .where(
+      gameId
+        ? and(
+            eq(realtimeRoomAdmissionLeases.creatorId, creatorId),
+            eq(realtimeRoomAdmissionLeases.gameId, gameId),
+          )
+        : eq(realtimeRoomAdmissionLeases.creatorId, creatorId),
+    );
+  return toSafeNonNegativeInteger(row?.current, "Concurrent rooms");
+};
+
 const loadOperationalQuotaUsageForValidatedScope = async ({
   database,
   key,
@@ -447,12 +462,16 @@ const loadOperationalQuotaUsageForValidatedScope = async ({
       });
     case "creator_concurrent_rooms":
     case "game_concurrent_rooms":
-      return unavailableUsage({
+      return availableUsage({
         key,
         scopeId,
         observedAt: now,
-        reason:
-          "Realtime global admission authority is not installed yet; process-local room state is not valid quota authority.",
+        current: await loadConcurrentRooms({
+          database,
+          creatorId,
+          gameId: key === "game_concurrent_rooms" ? gameId : undefined,
+          now,
+        }),
       });
   }
 };
@@ -527,29 +546,53 @@ export const decideOperationalQuotaAdmissionWithDatabase = async ({
   creatorId,
   gameId,
   requestedAmount,
-  now = new Date(),
   decisionId,
 }: {
-  database?: QuotaDatabase;
+  database?: QuotaTransactionalDatabase;
   key: OperationalQuotaKey;
   lane: OperationalLane;
   creatorId: string;
   gameId?: string;
   requestedAmount: number;
-  now?: Date;
   decisionId?: string;
-}): Promise<OperationalQuotaAdmissionDecision> => {
-  const [usage, control, budget] = await Promise.all([
-    loadOperationalQuotaUsage({ database, key, creatorId, gameId, now }),
-    getOperationalLaneControl({ database, lane }),
-    getOperationalBudgetStatus({ database, asOf: now }),
-  ]);
-  return decideOperationalQuotaAdmission({
-    lane,
-    usage,
-    requestedAmount,
-    control,
-    budget,
-    decisionId,
-  });
-};
+}): Promise<OperationalQuotaAdmissionDecision> =>
+  database.transaction(
+    async (transaction) => {
+      const rows = await transaction.execute(
+        sql<{
+          observedAt: Date | string;
+        }>`select transaction_timestamp() as "observedAt"`,
+      );
+      const value = rows[0]?.observedAt;
+      const observedAt =
+        value instanceof Date ? value : new Date(String(value ?? ""));
+      if (Number.isNaN(observedAt.getTime())) {
+        throw new OperationalQuotaScopeError(
+          "PostgreSQL did not return the quota decision clock.",
+        );
+      }
+      const [usage, control, budget] = await Promise.all([
+        loadOperationalQuotaUsage({
+          database: transaction,
+          key,
+          creatorId,
+          gameId,
+          now: observedAt,
+        }),
+        getOperationalLaneControl({ database: transaction, lane }),
+        getOperationalBudgetStatus({
+          database: transaction,
+          asOf: observedAt,
+        }),
+      ]);
+      return decideOperationalQuotaAdmission({
+        lane,
+        usage,
+        requestedAmount,
+        control,
+        budget,
+        decisionId,
+      });
+    },
+    { isolationLevel: "repeatable read", accessMode: "read only" },
+  );

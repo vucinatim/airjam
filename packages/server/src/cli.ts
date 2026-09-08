@@ -11,6 +11,7 @@ import { Command } from "commander";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadWorkspaceEnv } from "./env/load-workspace-env.js";
+import type { AirJamServerRuntime } from "./index.js";
 import {
   coerceDevLogsCliOptions,
   configureDevLogsCommand,
@@ -20,13 +21,23 @@ import { createServerLogger } from "./logging/logger.js";
 import { AIR_JAM_SERVER_VERSION } from "./version.js";
 
 const runServer = async (): Promise<number> => {
+  let runtime: AirJamServerRuntime | null = null;
   try {
     loadWorkspaceEnv();
     const { createAirJamServer } = await import("./index.js");
-    const runtime = createAirJamServer();
+    const { installServerProcessSignalHandlers } = await import(
+      "./process-lifecycle.js"
+    );
+    runtime = createAirJamServer();
     await runtime.start();
+    installServerProcessSignalHandlers({ runtime });
     return 0;
   } catch (error) {
+    try {
+      await runtime?.stop();
+    } catch {
+      // The original startup failure remains the actionable error.
+    }
     if (isEnvValidationError(error)) {
       console.error(
         formatEnvValidationError(error, {

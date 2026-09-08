@@ -7,8 +7,14 @@ export const runtimeDatabaseSchema = createRuntimeDatabaseSchema();
 
 export const {
   appIds,
+  operationalBudgetCycles,
+  operationalBudgetEvidence,
+  operationalLaneControls,
   operationalEventOutbox,
   operationalEvents,
+  realtimeAdmissionInstances,
+  realtimeControllerAdmissionLeases,
+  realtimeRoomAdmissionLeases,
   runtimeUsageSessions,
   runtimeUsageEvents,
   runtimeUsageControllerSegments,
@@ -22,12 +28,28 @@ export type ServerDatabase =
   | PostgresJsDatabase<Record<string, never>>
   | PostgresJsDatabase<typeof runtimeDatabaseSchema>;
 
-export const createServerDatabase = (
+export interface OwnedServerDatabase {
+  database: ServerDatabase;
+  close: () => Promise<void>;
+}
+
+export const createOwnedServerDatabase = (
   databaseUrl: string | undefined,
-): ServerDatabase | null => {
+): OwnedServerDatabase | null => {
   if (!databaseUrl) {
     return null;
   }
 
-  return drizzle(postgres(databaseUrl), { schema: runtimeDatabaseSchema });
+  const client = postgres(databaseUrl);
+  let closePromise: Promise<void> | null = null;
+  return {
+    database: drizzle(client, { schema: runtimeDatabaseSchema }),
+    close: () => (closePromise ??= client.end()),
+  };
+};
+
+export const createServerDatabase = (
+  databaseUrl: string | undefined,
+): ServerDatabase | null => {
+  return createOwnedServerDatabase(databaseUrl)?.database ?? null;
 };

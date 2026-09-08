@@ -35,6 +35,7 @@ describeWithPostgres("production quota PostgreSQL authority", () => {
   const firstGenerationId = `quota_generation_a_${suffix}`;
   const secondGenerationId = `quota_generation_b_${suffix}`;
   const cycleId = `quota_cycle_${suffix}`;
+  const realtimeInstanceId = `quota_realtime_instance_${suffix}`;
   const now = new Date();
   const cycleStart = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
@@ -246,9 +247,30 @@ describeWithPostgres("production quota PostgreSQL authority", () => {
       workerId: `worker:quota:${suffix}`,
       now,
     });
+    await database.insert(schema.realtimeAdmissionInstances).values({
+      instanceId: realtimeInstanceId,
+      leaseToken: `quota_realtime_lease_${suffix}`,
+      startedAt: now,
+      heartbeatAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+    });
+    await database.insert(schema.realtimeRoomAdmissionLeases).values({
+      roomId: `quota_realtime_room_${suffix}`,
+      leaseToken: `quota_room_lease_${suffix}`,
+      instanceId: realtimeInstanceId,
+      creatorId,
+      gameId: firstGameId,
+      maxControllers: 8,
+      admittedAt: now,
+    });
   });
 
   afterAll(async () => {
+    await database
+      .delete(schema.realtimeAdmissionInstances)
+      .where(
+        eq(schema.realtimeAdmissionInstances.instanceId, realtimeInstanceId),
+      );
     await database
       .delete(schema.operationalBudgetEvidence)
       .where(eq(schema.operationalBudgetEvidence.cycleId, cycleId));
@@ -297,8 +319,12 @@ describeWithPostgres("production quota PostgreSQL authority", () => {
       current: 1,
     });
     expect(byKey.get("creator_concurrent_rooms")).toMatchObject({
-      authorityStatus: "unavailable",
-      current: null,
+      authorityStatus: "available",
+      current: 1,
+    });
+    expect(byKey.get("game_concurrent_rooms")).toMatchObject({
+      authorityStatus: "available",
+      current: 1,
     });
   });
 
@@ -309,7 +335,6 @@ describeWithPostgres("production quota PostgreSQL authority", () => {
       lane: "game_creation",
       creatorId,
       requestedAmount: 49,
-      now,
       decisionId: `quota_decision_${suffix}`,
     });
 

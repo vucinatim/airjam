@@ -7,6 +7,7 @@ import type { RuntimeUsagePublisher } from "../analytics/runtime-usage.js";
 import type { ServerLogger } from "../logging/logger.js";
 import type { ServerOperationalEventPublisher } from "../operations/operational-event-publisher.js";
 import type { HostBootstrapAuthService } from "../services/auth-service.js";
+import type { RealtimeAdmissionService } from "../services/realtime-admission-service.js";
 import type { RoomManager } from "../services/room-manager.js";
 import type { AirJamIoServer, AirJamSocket } from "./socket-types.js";
 
@@ -15,6 +16,7 @@ export interface SocketHandlerContext {
   socket: AirJamSocket;
   logger: ServerLogger;
   roomManager: RoomManager;
+  realtimeAdmissionService: RealtimeAdmissionService;
   authService: HostBootstrapAuthService;
   runtimeUsagePublisher: RuntimeUsagePublisher;
   operationalEventPublisher: ServerOperationalEventPublisher;

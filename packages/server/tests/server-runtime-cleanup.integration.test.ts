@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAirJamServer, type AirJamServerRuntime } from "../src/index";
 import type { HostBootstrapAuthService } from "../src/services/auth-service";
 import { RoomManager } from "../src/services/room-manager";
+import { getHttpServerLoopbackUrl } from "./helpers/http-server-test-url";
 import { emitWithAck, waitForSocketConnect } from "./helpers/socket-test-utils";
 
 describe("server runtime cleanup", () => {
@@ -26,8 +27,8 @@ describe("server runtime cleanup", () => {
       roomManager,
       authService,
     });
-    const port = await runtime.start(0);
-    baseUrl = `http://127.0.0.1:${port}`;
+    await runtime.start(0);
+    baseUrl = getHttpServerLoopbackUrl(runtime.httpServer);
   });
 
   afterEach(async () => {

@@ -40,11 +40,15 @@ import {
   inspectLifecycleCleanupCandidates,
   scheduleLifecycleCleanup,
 } from "../src/server/operations/lifecycle-cleanup-service";
-import { syncRailwayOperationalBudgetEvidence } from "../src/server/operations/production-budget-refresh-service";
 import {
   findOperationalBudgetEvidenceReplay,
   getOperationalBudgetStatus,
 } from "../src/server/operations/production-budget-service";
+import {
+  createRailwayBudgetEvidenceAdapter,
+  resolveRailwayBudgetEvidenceConfig,
+} from "../src/server/operations/railway-budget-evidence-adapter";
+import { syncRailwayOperationalBudgetEvidence } from "../src/server/operations/production-budget-refresh-service";
 import {
   getOperationalLaneControl,
   listOperationalLaneControls,
@@ -59,14 +63,12 @@ import {
   decideOperationalQuotaAdmissionWithDatabase,
   listOperationalQuotaUsage,
 } from "../src/server/operations/production-quota-service";
-import {
-  createRailwayBudgetEvidenceAdapter,
-  resolveRailwayBudgetEvidenceConfig,
-} from "../src/server/operations/railway-budget-evidence-adapter";
+import { inspectRealtimeAdmission } from "../src/server/operations/realtime-admission-inspection-service";
 
 type ProductionControlCliInput =
   | { command: "status"; json: boolean }
   | { command: "budget-status"; json: boolean }
+  | { command: "realtime-status"; json: boolean }
   | {
       command: "jobs-policy";
       kind?: OperationalJobKind;
@@ -394,6 +396,9 @@ const parseInput = (raw: string | undefined): ProductionControlCliInput => {
   if (input.command === "budget-status") {
     return { command: "budget-status", json };
   }
+  if (input.command === "realtime-status") {
+    return { command: "realtime-status", json };
+  }
   if (input.command === "jobs-policy") {
     return { command: "jobs-policy", kind: readOptionalJobKind(input), json };
   }
@@ -656,6 +661,17 @@ const main = async (): Promise<void> => {
                 (budget.actualAmountMicrousd ?? 0) / 1_000_000
               ).toFixed(2)} (${budget.evidenceStatus} evidence).`
             : `Budget: unavailable (${budget.evidenceStatus} evidence).`,
+        );
+      }
+      return;
+    }
+
+    if (input.command === "realtime-status") {
+      const result = await inspectRealtimeAdmission({ database });
+      if (input.json) printJson(input.command, false, result);
+      else {
+        console.log(
+          `Realtime: ${result.rooms.active}/${result.rooms.burstCeiling} rooms, ${result.controllers.active}/${result.controllers.burstCeiling} controllers, ${result.instances.live} live instances (${result.instances.draining} draining).`,
         );
       }
       return;
@@ -1242,9 +1258,7 @@ const main = async (): Promise<void> => {
         console.log(
           `Recorded ${result.evidence.provider} budget evidence at $${(
             result.evidence.actualAmountMicrousd / 1_000_000
-          ).toFixed(
-            2,
-          )}; derived ${result.budget.state ?? "unavailable"} state.`,
+          ).toFixed(2)}; derived ${result.budget.state ?? "unavailable"} state.`,
         );
       }
       return;
