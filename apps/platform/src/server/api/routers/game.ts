@@ -111,6 +111,7 @@ export const gameRouter = createTRPCRouter({
       await db.insert(appIds).values({
         id: crypto.randomUUID(),
         gameId: gameId,
+        creatorId: ctx.user.id,
         key: appId,
       });
 

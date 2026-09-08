@@ -166,6 +166,7 @@ export const createOwnedGameForMachine = async ({
     await db.insert(appIds).values({
       id: crypto.randomUUID(),
       gameId,
+      creatorId: userId,
       key: `aj_app_${crypto.randomUUID().replace(/-/g, "")}`,
     });
 

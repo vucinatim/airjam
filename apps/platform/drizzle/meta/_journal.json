@@ -267,6 +267,13 @@
       "when": 1788811565297,
       "tag": "0037_superseded_release_retention",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1788835591259,
+      "tag": "0038_app_id_creator_expand",
+      "breakpoints": true
     }
   ]
 }
