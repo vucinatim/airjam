@@ -19,10 +19,8 @@ import {
   setPlatformBackupSchedule,
   writePlatformRecoveryEvidence,
 } from "../lib/platform-recovery.mjs";
-import {
-  createRailwayApiClient,
-  resolveRailwayApiToken,
-} from "../lib/railway-api.mjs";
+import { resolveRailwayApiToken } from "../lib/railway-api.mjs";
+import { resolveCurrentRailwayDeploymentAuthority } from "../lib/railway-deployment-authority.mjs";
 import { runCommand, runCommandResult } from "../lib/shell.mjs";
 import { registerOperationsContractCommands } from "./operations-contract.mjs";
 
@@ -222,15 +220,6 @@ const attachPlatformRecoveryEvidence = ({ kind, result }) => {
   }
 };
 
-const resolveDomainHostname = (value) => {
-  if (typeof value !== "string" || !value.trim()) return null;
-  try {
-    return new URL(value.includes("://") ? value : `https://${value}`).hostname;
-  } catch {
-    return null;
-  }
-};
-
 export const verifyRailwayReleaseOriginAttestation = async ({
   result,
   expectedProjectId,
@@ -265,49 +254,66 @@ export const verifyRailwayReleaseOriginAttestation = async ({
 
   const deploymentId = result.source.deployment.deploymentId;
   try {
-    const railwayClient = client ?? createRailwayApiClient();
-    const deployment = await railwayClient.getDeployment(deploymentId);
-    const environment = await railwayClient.getEnvironment(
-      deployment.environmentId,
+    const authority = await resolveCurrentRailwayDeploymentAuthority(
+      {
+        deploymentId,
+        expectedProjectId: expectedProjectId.trim(),
+        expectedEnvironmentName: "production",
+      },
+      { client },
     );
-    const instance = environment.serviceInstances.find(
-      (entry) => entry.serviceId === deployment.serviceId,
-    );
-    const domainHostnames = [
-      ...(instance?.domains?.customDomains ?? []).map((entry) => entry.domain),
-      ...(instance?.domains?.serviceDomains ?? []).map((entry) => entry.domain),
-      instance?.latestDeployment?.staticUrl ?? null,
-      instance?.latestDeployment?.url ?? null,
-    ]
-      .map(resolveDomainHostname)
-      .filter(Boolean);
+    if (authority.status === "failed") {
+      return {
+        ...result,
+        status: "failed",
+        evidenceKind: "diagnostic",
+        productionEvidenceEligible: false,
+        providerVerification: {
+          status: "failed",
+          provider: "railway",
+          failureCode: authority.failureCode,
+          reason: authority.reason,
+        },
+        checks: [
+          ...result.checks,
+          {
+            id: "provider.railway-deployment",
+            status: "failed",
+            summary: "Railway provider verification could not be completed.",
+            evidence: {
+              failureCode: authority.failureCode,
+            },
+          },
+        ],
+        summary: {
+          passed: result.summary.passed,
+          failed: result.summary.failed + 1,
+        },
+      };
+    }
     const platformHostname = new URL(result.source.platformOrigin).hostname;
     const releaseHostname = new URL(result.source.releaseOrigin).hostname;
-    const platformDomainMatched = domainHostnames.includes(platformHostname);
-    const releaseDomainMatched = domainHostnames.includes(releaseHostname);
-    const expectedProjectMatched =
-      environment.projectId === expectedProjectId.trim();
+    const platformDomainMatched =
+      authority.domainHostnames.includes(platformHostname);
+    const releaseDomainMatched =
+      authority.domainHostnames.includes(releaseHostname);
     const verified =
-      deployment.id === deploymentId &&
-      deployment.status === "SUCCESS" &&
-      environment.name === "production" &&
-      expectedProjectMatched &&
-      instance?.latestDeployment?.id === deploymentId &&
+      authority.status === "verified" &&
       platformDomainMatched &&
       releaseDomainMatched;
     const providerVerification = {
       status: verified ? "verified" : "mismatch",
       provider: "railway",
-      projectId: environment.projectId,
-      environmentId: environment.id,
-      serviceId: deployment.serviceId,
+      projectId: authority.projectId,
+      environmentId: authority.environmentId,
+      serviceId: authority.serviceId,
       deploymentId,
-      productionEnvironment: environment.name === "production",
-      successfulDeployment: deployment.status === "SUCCESS",
-      currentServiceDeployment: instance?.latestDeployment?.id === deploymentId,
+      productionEnvironment: authority.expectedEnvironmentMatched,
+      successfulDeployment: authority.successfulDeployment,
+      currentServiceDeployment: authority.currentServiceDeployment,
       platformDomainMatched,
       releaseDomainMatched,
-      expectedProjectMatched,
+      expectedProjectMatched: authority.expectedProjectMatched,
     };
     const providerCheck = {
       id: "provider.railway-deployment",
@@ -321,7 +327,7 @@ export const verifyRailwayReleaseOriginAttestation = async ({
         currentServiceDeployment: providerVerification.currentServiceDeployment,
         platformDomainMatched: providerVerification.platformDomainMatched,
         releaseDomainMatched: providerVerification.releaseDomainMatched,
-        expectedProjectMatched: providerVerification.expectedProjectMatched,
+        expectedProjectMatched: authority.expectedProjectMatched,
       },
     };
     return {
@@ -2008,6 +2014,10 @@ export const registerPlatformCommands = (program) => {
         "--platform-url <url>",
         "Deployed platform origin for readiness proof",
       )
+      .option(
+        "--deployment-id <id>",
+        "Exact current provider deployment to verify independently",
+      )
       .option("--json", "Print the stable machine-readable contract"),
   ).action(async (options) => {
     await runPlatformOperator({
@@ -2020,6 +2030,7 @@ export const registerPlatformCommands = (program) => {
         actor: options.actor,
         reason: options.reason,
         platformUrl: options.platformUrl,
+        deploymentId: options.deploymentId,
         json: Boolean(options.json),
       },
       options,

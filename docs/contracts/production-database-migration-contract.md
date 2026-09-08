@@ -1,6 +1,6 @@
 # Production Database Migration Contract
 
-Last updated: 2026-09-04
+Last updated: 2026-09-08
 Status: canonical contract
 
 ## Purpose
@@ -24,8 +24,11 @@ There is no second migration registry, hand-written production SQL path, or
 automatic production migration at application startup.
 
 Only loopback database hosts are classified as local. A direct non-loopback
-`DATABASE_URL` is deliberately unclassified and receives the same explicit
-production-authority gates as a production or unclassified Railway target.
+`DATABASE_URL` is deliberately unclassified and may be inspected, but it
+cannot be planned or applied through the production migration lifecycle.
+Production plans require an explicit provider-attested Railway project and
+environment so deployment verification can never become impossible after the
+schema has changed.
 
 ## Migration Policy
 
@@ -75,10 +78,24 @@ The lifecycle is:
    idempotency key, and `--apply`. It rechecks every binding, pauses only the
    declared lanes, drains active jobs, applies Drizzle migrations, and verifies
    the journal and declared database objects. It does not reopen lanes.
-4. the exact planned application revision is deployed.
+4. the reviewed source tree is deployed, either as the source commit itself or
+   as a GitHub merge commit that contains the source commit without changing
+   its tree.
 5. `verify` independently checks the database again and, for production, calls
-   the deployed `/api/readiness` endpoint and requires the exact planned Git
-   revision. Only then does it restore lanes that the migration paused.
+   the deployed `/api/readiness` endpoint and queries the explicit deployment
+   ID through Railway. It requires that deployment to be the successful current
+   deployment in the exact project and environment, obtains its full Git
+   revision from the provider, and proves that revision contains the reviewed
+   source commit with an identical Git tree. The application must report the
+   same deployment ID and, whenever runtime revision metadata is available, the
+   same revision. Only then does it restore lanes that the migration paused.
+
+Production `plan`, `apply`, and `verify` require one of
+`RAILWAY_PROJECT_TOKEN`, `RAILWAY_API_TOKEN`, or `RAILWAY_TOKEN` in the
+operator environment. Railway CLI login alone is not provider API authority.
+The prerequisite is checked before backup creation and again before apply, so
+an obviously unverifiable production plan cannot mutate the schema or pause a
+lane.
 
 Apply and verify share one PostgreSQL advisory lifecycle lock. This prevents
 concurrent operators from applying the same catalog or restoring the same lane
@@ -117,7 +134,7 @@ Migration runs are durable and unique by plan digest and idempotency key.
 1. retries with the same plan and key replay safely
 2. reuse of either identity for different intent is rejected
 3. apply failures are recorded as `apply_failed`
-4. post-apply or deployed-revision failures are recorded as
+4. post-apply or deployment-evidence failures are recorded as
    `verification_failed`
 5. affected lanes stay paused on every failure after drain begins
 6. verification may be retried after the external condition is repaired
@@ -145,16 +162,28 @@ data verification are defined by the
 
 ## Production Sequence
 
-Production plans are created only from the clean, merged commit intended for
-deployment. Because `main` is the production branch, agents should keep the
-merge-to-apply interval short:
+Production plans are created from the clean, fully reviewed PR head. The merge
+commit may have a different commit identity, but its tree must remain identical
+to the reviewed source and the source commit must be its ancestor. Because
+`main` is the production branch, agents should keep the merge-to-apply interval
+short:
 
-1. merge the reviewed migration commit
-2. inspect and create the production plan against the explicit Railway
-   environment
+1. inspect and create the production plan from the final green, reviewed PR
+   head against the explicit Railway environment
+2. merge that exact head without introducing tree changes
 3. apply the plan while the new deployment is progressing
-4. wait for the exact revision to become current and ready
-5. verify the plan and allow the lifecycle to restore affected lanes
+4. wait for the merge revision to become current and ready, then fetch `main`
+   so that exact merge commit is present in the operator's local Git object
+   database
+5. ensure the operator environment still contains a Railway project or API
+   token; `railway login` by itself does not satisfy provider verification
+6. verify with `--deployment-id <provider-deployment>`; verification fetches
+   the exact current successful Railway deployment and full Git revision from
+   the provider, proves that revision contains the reviewed source with an
+   identical tree, and requires the live platform origin to report the same
+   deployment ID before it restores lanes. A Railway rollback may omit the Git
+   revision from application runtime metadata, but only the independently
+   provider-attested exact revision may fill that evidence gap
 
 Do not invoke raw `drizzle-kit migrate`, extract a production URL into a shell,
 or restore lanes manually during the normal path.

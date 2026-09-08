@@ -1096,6 +1096,39 @@ test("provider verification fails closed on a mismatched release domain", async 
   assert.equal(result.providerVerification.releaseDomainMatched, false);
 });
 
+test("provider verification distinguishes lookup failure from identity mismatch", async () => {
+  const result = await verifyRailwayReleaseOriginAttestation({
+    result: productionAttestationCandidate(),
+    expectedProjectId: "project-airjam",
+    client: {
+      getDeployment: async () => {
+        throw new Error("provider unavailable");
+      },
+      getEnvironment: async () => {
+        throw new Error("not reached");
+      },
+    },
+    tokenAvailable: true,
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.evidenceKind, "diagnostic");
+  assert.equal(result.productionEvidenceEligible, false);
+  assert.equal(result.providerVerification.status, "failed");
+  assert.equal(
+    result.providerVerification.failureCode,
+    "provider_request_failed",
+  );
+  assert.match(result.providerVerification.reason, /provider unavailable/u);
+  assert.deepEqual(result.summary, { passed: 0, failed: 1 });
+  assert.deepEqual(result.checks.at(-1), {
+    id: "provider.railway-deployment",
+    status: "failed",
+    summary: "Railway provider verification could not be completed.",
+    evidence: { failureCode: "provider_request_failed" },
+  });
+});
+
 test("a public production claim stays diagnostic without an expected Railway project", async () => {
   const result = await verifyRailwayReleaseOriginAttestation({
     result: productionAttestationCandidate(),
