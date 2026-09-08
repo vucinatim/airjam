@@ -1332,8 +1332,6 @@ export type RuntimeDatabaseSchema = ReturnType<
 >;
 
 type OperationalSelectDatabase = Pick<PostgresJsDatabase, "select">;
-type OperationalAuthorityDatabase = OperationalSelectDatabase &
-  Pick<PostgresJsDatabase, "execute">;
 
 export type OperationalBudgetTables = Pick<
   RuntimeDatabaseSchema,
@@ -1344,9 +1342,6 @@ export type OperationalLaneControlTables = Pick<
   RuntimeDatabaseSchema,
   "operationalLaneControls"
 >;
-
-export type OperationalAuthorityTables = OperationalBudgetTables &
-  OperationalLaneControlTables;
 
 export const serializeOperationalBudgetCycle = (
   row: RuntimeDatabaseSchema["operationalBudgetCycles"]["$inferSelect"],
@@ -1412,25 +1407,6 @@ export const getDefaultOperationalLaneControl = (
   updatedAt: null,
 });
 
-const readOperationalAuthorityClock = async (
-  database: Pick<OperationalAuthorityDatabase, "execute">,
-): Promise<Date> => {
-  const rows = await database.execute(
-    sql<{
-      observedAt: Date | string;
-    }>`select transaction_timestamp() as "observedAt"`,
-  );
-  const value = rows[0]?.observedAt;
-  const observedAt =
-    value instanceof Date ? value : new Date(String(value ?? ""));
-  if (Number.isNaN(observedAt.getTime())) {
-    throw new OperationalAdmissionPolicyError(
-      "PostgreSQL did not return the operational authority snapshot clock.",
-    );
-  }
-  return observedAt;
-};
-
 export const readOperationalBudgetSnapshot = async ({
   database,
   tables,
@@ -1482,35 +1458,4 @@ export const readOperationalLaneControl = async ({
   return row
     ? serializeOperationalLaneControl(row)
     : getDefaultOperationalLaneControl(lane);
-};
-
-export const readOperationalAuthoritySnapshot = async ({
-  database,
-  tables,
-  lane,
-  asOf,
-}: {
-  database: OperationalAuthorityDatabase;
-  tables: OperationalAuthorityTables;
-  lane: OperationalLane;
-  asOf?: Date;
-}): Promise<{
-  observedAt: Date;
-  control: OperationalLaneControlSnapshot;
-  budget: OperationalBudgetAuthoritySnapshot;
-}> => {
-  const observedAt = asOf ?? (await readOperationalAuthorityClock(database));
-  const [control, budget] = await Promise.all([
-    readOperationalLaneControl({ database, tables, lane }),
-    readOperationalBudgetSnapshot({ database, tables, asOf: observedAt }),
-  ]);
-  return {
-    observedAt,
-    control,
-    budget: deriveOperationalBudgetAuthoritySnapshot({
-      cycle: budget.cycle,
-      evidence: budget.evidence,
-      asOf: observedAt,
-    }),
-  };
 };

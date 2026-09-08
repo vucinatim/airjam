@@ -161,6 +161,7 @@ describe("operational job worker service", () => {
         AIRJAM_PLATFORM_WORKER_HOST: "127.0.0.1",
         AIRJAM_PLATFORM_WORKER_PORT: String(port),
         AIRJAM_PLATFORM_WORKER_ID: "worker:budget-retained",
+        AIRJAM_PLATFORM_WORKER_CONTROL_TOKEN: "test-control-token",
         AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MODE: "enabled",
         AIRJAM_PLATFORM_WORKER_POLL_MS: "60000",
         AIRJAM_PLATFORM_WORKER_REPAIR_MS: "60000",
@@ -211,9 +212,20 @@ describe("operational job worker service", () => {
         budgetRefreshConfigured: true,
         lastBudgetRefreshStatus: "failed",
         lastBudgetRefreshErrorCode: "Error",
-        budgetStatus: { evidenceStatus: "fresh" },
+        budgetEvidenceStatus: "fresh",
         authorities: { budgetEvidence: { status: "ready" } },
       },
+    });
+    expect(ready?.body).not.toHaveProperty("budgetStatus");
+    await expect(
+      readJson(
+        await fetch(`http://127.0.0.1:${port}/status`, {
+          headers: { authorization: "Bearer test-control-token" },
+        }),
+      ),
+    ).resolves.toMatchObject({
+      status: 200,
+      body: { budgetStatus: { evidenceStatus: "fresh" } },
     });
   });
 
@@ -228,7 +240,7 @@ describe("operational job worker service", () => {
         AIRJAM_PLATFORM_WORKER_PORT: String(port),
         AIRJAM_PLATFORM_WORKER_ID: "worker:budget-drain",
         AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MODE: "enabled",
-        AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MS: "500",
+        AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MS: "60000",
         AIRJAM_PLATFORM_WORKER_POLL_MS: "60000",
         AIRJAM_PLATFORM_WORKER_REPAIR_MS: "60000",
         AIRJAM_PLATFORM_WORKER_LIFECYCLE_CLEANUP_MS: "60000",
@@ -264,6 +276,7 @@ describe("operational job worker service", () => {
         return refresh.promise;
       },
       inspectBudgetEvidence: async () => budgetStatus("missing"),
+      budgetRefreshRetryInitialMs: 20,
     });
 
     let unready: Awaited<ReturnType<typeof readJson>> | null = null;
@@ -285,10 +298,11 @@ describe("operational job worker service", () => {
       body: {
         authorityReady: false,
         lastBudgetRefreshStatus: "failed",
-        budgetStatus: { evidenceStatus: "missing" },
+        budgetEvidenceStatus: "missing",
         authorities: { budgetEvidence: { status: "failed" } },
       },
     });
+    expect(unready?.body).not.toHaveProperty("budgetStatus");
     while (refreshAttempts < 2) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }

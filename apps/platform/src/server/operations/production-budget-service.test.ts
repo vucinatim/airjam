@@ -230,6 +230,24 @@ describe("production budget service", () => {
     ).rejects.toThrow(/unsupported fields: state/u);
   });
 
+  it("translates only contract validation failures and retains their cause", () => {
+    let caught: unknown;
+    try {
+      buildOperationalBudgetStatus({
+        cycle: makeCycleSnapshot(),
+        evidence: [makeEvidenceSnapshot()],
+        asOf: new Date(Number.NaN),
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(OperationalBudgetConflictError);
+    expect((caught as Error & { cause?: unknown }).cause).toMatchObject({
+      name: "OperationalAdmissionPolicyError",
+      message: "Budget status time must be valid.",
+    });
+  });
+
   it("previews without writes, then records and replays one immutable evidence item", async () => {
     const fake = createFakeDatabase();
     const input = {

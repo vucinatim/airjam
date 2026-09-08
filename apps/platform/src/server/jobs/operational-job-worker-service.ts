@@ -261,6 +261,9 @@ const coreWorkerAuthorityNames = [
   "telemetryRetention",
 ] as const satisfies readonly WorkerAuthorityName[];
 
+const DEFAULT_BUDGET_REFRESH_RETRY_INITIAL_MS = 5_000;
+const MAX_BUDGET_REFRESH_RETRY_MS = 60_000;
+
 type RefreshBudgetEvidence = (input: {
   actor: string;
   projectId: string;
@@ -284,6 +287,7 @@ export const startOperationalJobWorkerService = async ({
   readSchemaCompatibility = readPlatformSchemaCompatibility,
   refreshBudgetEvidence,
   inspectBudgetEvidence = inspectOperationalBudgetRefreshAuthority,
+  budgetRefreshRetryInitialMs = DEFAULT_BUDGET_REFRESH_RETRY_INITIAL_MS,
 }: {
   env?: Record<string, string | undefined>;
   runCycle?: typeof runOperationalJobWorkerCycle;
@@ -299,8 +303,15 @@ export const startOperationalJobWorkerService = async ({
   readSchemaCompatibility?: typeof readPlatformSchemaCompatibility;
   refreshBudgetEvidence?: RefreshBudgetEvidence;
   inspectBudgetEvidence?: InspectBudgetEvidence;
+  budgetRefreshRetryInitialMs?: number;
 } = {}): Promise<OperationalJobWorkerServiceHandle> => {
   const config = loadOperationalJobWorkerServiceConfig(env);
+  if (
+    !Number.isSafeInteger(budgetRefreshRetryInitialMs) ||
+    budgetRefreshRetryInitialMs <= 0
+  ) {
+    throw new Error("Budget refresh retry delay must be a positive integer.");
+  }
   const githubIssueConfig = resolveGitHubAlertIssueConfig(env);
   const githubIssueProjector = githubIssueConfig.enabled
     ? createGitHubAlertIssueProjector({ config: githubIssueConfig })
@@ -355,6 +366,8 @@ export const startOperationalJobWorkerService = async ({
   let syntheticInFlight: Promise<void> | null = null;
   let issueProjectionInFlight: Promise<void> | null = null;
   let budgetRefreshInFlight: Promise<void> | null = null;
+  let budgetRefreshRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  let budgetRefreshFailureCount = 0;
   let lastEventDeliveryAt: string | null = null;
   let lastEventDeliveryStatus: string | null = null;
   let lastSyntheticAt: string | null = null;
@@ -800,7 +813,30 @@ export const startOperationalJobWorkerService = async ({
   issueProjectionTimer.unref();
   runIssueProjectionSchedule();
 
-  const runBudgetRefreshSchedule = () => {
+  const clearBudgetRefreshRetry = () => {
+    if (!budgetRefreshRetryTimer) return;
+    clearTimeout(budgetRefreshRetryTimer);
+    budgetRefreshRetryTimer = null;
+  };
+
+  const scheduleBudgetRefreshRetry = () => {
+    if (budgetRefreshRetryTimer || !canScheduleWork()) return;
+    const exponentialDelay =
+      budgetRefreshRetryInitialMs *
+      2 ** Math.min(10, Math.max(0, budgetRefreshFailureCount - 1));
+    const retryDelayMs = Math.min(
+      exponentialDelay,
+      MAX_BUDGET_REFRESH_RETRY_MS,
+      config.budgetRefreshMs,
+    );
+    budgetRefreshRetryTimer = setTimeout(() => {
+      budgetRefreshRetryTimer = null;
+      runBudgetRefreshSchedule();
+    }, retryDelayMs);
+    budgetRefreshRetryTimer.unref();
+  };
+
+  function runBudgetRefreshSchedule() {
     const budgetProjectId = config.railwayProjectId;
     if (
       !canScheduleWork() ||
@@ -831,8 +867,12 @@ export const startOperationalJobWorkerService = async ({
           );
           error.name = "OperationalBudgetAuthorityUnavailable";
           recordAuthorityFailure("budgetEvidence", error);
+          budgetRefreshFailureCount += 1;
+          scheduleBudgetRefreshRetry();
           return;
         }
+        budgetRefreshFailureCount = 0;
+        clearBudgetRefreshRetry();
         recordAuthoritySuccess("budgetEvidence");
       })
       .catch(async (error: unknown) => {
@@ -858,9 +898,13 @@ export const startOperationalJobWorkerService = async ({
             projectId: budgetProjectId,
           })
         ) {
+          budgetRefreshFailureCount = 0;
+          clearBudgetRefreshRetry();
           recordAuthoritySuccess("budgetEvidence");
-        } else if (retainedBudgetStatus) {
+        } else {
+          budgetRefreshFailureCount += 1;
           recordAuthorityFailure("budgetEvidence", error);
+          scheduleBudgetRefreshRetry();
         }
         logFailure({
           event: "operational_budget.refresh_failed",
@@ -875,7 +919,7 @@ export const startOperationalJobWorkerService = async ({
         if (budgetRefreshInFlight === task) budgetRefreshInFlight = null;
       });
     budgetRefreshInFlight = task;
-  };
+  }
 
   const budgetRefreshTimer = config.budgetRefreshEnabled
     ? setInterval(runBudgetRefreshSchedule, config.budgetRefreshMs)
@@ -939,14 +983,22 @@ export const startOperationalJobWorkerService = async ({
     };
   };
 
+  const publicStatus = () => {
+    const { budgetStatus: detailedBudgetStatus, ...currentStatus } = status();
+    return {
+      ...currentStatus,
+      budgetEvidenceStatus: detailedBudgetStatus?.evidenceStatus ?? null,
+    };
+  };
+
   const server = createServer((request, response) => {
     const path = request.url ?? "/";
     if (request.method === "GET" && path === "/health") {
-      writeJson(response, closed ? 503 : 200, status());
+      writeJson(response, closed ? 503 : 200, publicStatus());
       return;
     }
     if (request.method === "GET" && path === "/ready") {
-      const currentStatus = status();
+      const currentStatus = publicStatus();
       writeJson(
         response,
         accepting && !closed && currentStatus.authorityReady ? 200 : 503,
@@ -1008,6 +1060,7 @@ export const startOperationalJobWorkerService = async ({
     clearInterval(syntheticTimer);
     clearInterval(issueProjectionTimer);
     if (budgetRefreshTimer) clearInterval(budgetRefreshTimer);
+    clearBudgetRefreshRetry();
     const timeout = new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, config.drainTimeoutMs);
       timer.unref();

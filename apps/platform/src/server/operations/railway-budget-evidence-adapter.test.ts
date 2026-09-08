@@ -154,7 +154,7 @@ describe("Railway budget evidence adapter", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects unknown, duplicate, and invalid measurements", () => {
+  it("rejects unknown, duplicate, invalid, and incomplete measurements", () => {
     expect(() =>
       calculateRailwayUsageCost([
         { measurement: "NETWORK_RX_GB", value: 1 },
@@ -171,5 +171,8 @@ describe("Railway budget evidence adapter", () => {
         { measurement: "MEMORY_USAGE_GB", value: 2 },
       ]),
     ).toThrow(/returned more than once/u);
+    expect(() =>
+      calculateRailwayUsageCost([{ measurement: "MEMORY_USAGE_GB", value: 1 }]),
+    ).toThrow(/omitted required measurements/u);
   });
 });

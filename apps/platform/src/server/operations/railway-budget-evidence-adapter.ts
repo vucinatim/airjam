@@ -151,12 +151,18 @@ export const calculateRailwayUsageCost = (
     }
     values.set(entry.measurement, entry.value);
   }
+  const missingMeasurements = RAILWAY_USAGE_MEASUREMENTS.filter(
+    (measurement) => !values.has(measurement),
+  );
+  if (missingMeasurements.length > 0) {
+    throw new RailwayBudgetEvidenceError(
+      `Railway usage response omitted required measurements: ${missingMeasurements.join(", ")}.`,
+    );
+  }
   const breakdownMicrousd = Object.fromEntries(
     RAILWAY_USAGE_MEASUREMENTS.map((measurement) => [
       measurement,
-      toMicrousd(
-        (values.get(measurement) ?? 0) * railwayUsageCostRates[measurement],
-      ),
+      toMicrousd(values.get(measurement)! * railwayUsageCostRates[measurement]),
     ]),
   );
   return {

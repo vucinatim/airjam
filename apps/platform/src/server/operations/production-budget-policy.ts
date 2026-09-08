@@ -1,12 +1,13 @@
 import {
   deriveOperationalBudgetAuthoritySnapshot,
   OPERATIONAL_BUDGET_EVIDENCE_MAX_AGE_MS,
+  OperationalAdmissionPolicyError,
   operationalBudgetEvidenceContractVersion,
   resolveOperationalBudgetStateFromCycle,
   selectLatestOperationalBudgetEvidence,
   type OperationalBudgetCycleSnapshot,
-  type OperationalBudgetEvidenceStatus,
   type OperationalBudgetEvidenceSnapshot,
+  type OperationalBudgetEvidenceStatus,
   type OperationalBudgetProfile,
   type OperationalBudgetState,
 } from "@air-jam/database-contract";
@@ -130,8 +131,8 @@ export type OperationalBudgetEvidencePreview = {
 };
 
 export class OperationalBudgetConflictError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "OperationalBudgetConflictError";
   }
 }
@@ -515,8 +516,9 @@ export const buildOperationalBudgetStatus = ({
       evidence: selectedEvidence,
     };
   } catch (error) {
-    throw new OperationalBudgetConflictError(
-      error instanceof Error ? error.message : String(error),
-    );
+    if (!(error instanceof OperationalAdmissionPolicyError)) {
+      throw error;
+    }
+    throw new OperationalBudgetConflictError(error.message, { cause: error });
   }
 };
