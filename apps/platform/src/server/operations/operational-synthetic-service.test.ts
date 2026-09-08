@@ -4,6 +4,7 @@ import { getOperationalSyntheticCheck } from "./operational-reliability-policy";
 import {
   anchorOperationalSyntheticRunToDatabaseTime,
   executeOperationalSyntheticCheck,
+  resolveOperationalSyntheticRuntimeConfig,
   type OperationalSyntheticRuntimeConfig,
 } from "./operational-synthetic-service";
 
@@ -45,6 +46,47 @@ const execute = (
   });
 
 describe("operational synthetic execution", () => {
+  it("uses Railway preview authority and environment-scoped sibling targets", () => {
+    const runtime = resolveOperationalSyntheticRuntimeConfig({
+      RAILWAY_ENVIRONMENT_NAME: "air-jam-pr-109",
+      RAILWAY_PUBLIC_DOMAIN:
+        "air-jam-platform-worker-air-jam-pr-109.up.railway.app",
+      RAILWAY_SERVICE_AIR_JAM_PLATFORM_URL:
+        "air-jam-platform-air-jam-pr-109.up.railway.app",
+      RAILWAY_SERVICE_AIR_JAM_SERVER_URL:
+        "air-jam-server-air-jam-pr-109.up.railway.app",
+      RAILWAY_SERVICE_AIR_JAM_PLATFORM_WORKER_URL:
+        "air-jam-platform-worker-air-jam-pr-109.up.railway.app",
+      RAILWAY_SERVICE_AIR_JAM_RELEASE_BROWSER_WORKER_URL:
+        "air-jam-release-browser-worker-air-jam-pr-109.up.railway.app",
+      AIRJAM_OPERATIONAL_ENVIRONMENT: "production",
+      NEXT_PUBLIC_APP_URL: "https://airjam.io",
+      NEXT_PUBLIC_AIR_JAM_SERVER_URL: "https://api.airjam.io",
+      AIRJAM_SYNTHETIC_WORKER_ORIGIN:
+        "https://air-jam-operations-worker-production.up.railway.app",
+      AIRJAM_SYNTHETIC_BROWSER_WORKER_ORIGIN:
+        "https://air-jam-release-browser-worker-production.up.railway.app",
+    });
+
+    expect(runtime).toMatchObject({
+      environment: "preview",
+      requestOrigin:
+        "https://air-jam-platform-air-jam-pr-109.up.railway.app",
+      realtimeOrigin:
+        "https://air-jam-server-air-jam-pr-109.up.railway.app",
+      targets: {
+        "platform.readiness":
+          "https://air-jam-platform-air-jam-pr-109.up.railway.app/api/readiness",
+        "realtime.health":
+          "https://air-jam-server-air-jam-pr-109.up.railway.app/health",
+        "worker.ready":
+          "https://air-jam-platform-worker-air-jam-pr-109.up.railway.app/ready",
+        "browser_worker.health":
+          "https://air-jam-release-browser-worker-air-jam-pr-109.up.railway.app/health",
+      },
+    });
+  });
+
   it("anchors persisted chronology to database time without changing measured duration", async () => {
     const run = await execute("landing-docs", {
       fetchImpl: (async () => new Response("ok")) as typeof fetch,

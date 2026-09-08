@@ -26,7 +26,7 @@ const normalizePublicUrl = (rawUrl: string | undefined): string | null => {
   }
 };
 
-const normalizeOrigin = (rawUrl: string | undefined): string | null => {
+export const normalizeOrigin = (rawUrl: string | undefined): string | null => {
   const normalized = normalizePublicUrl(rawUrl);
   if (!normalized) {
     return null;

@@ -204,13 +204,22 @@ PostgreSQL across deploys; a process restart must never be treated as job loss.
 
 Configure these reliability values on the operational worker:
 
-1. `AIRJAM_OPERATIONAL_ENVIRONMENT=production`
-2. `AIRJAM_SYNTHETIC_HOSTED_RELEASE_URL` pointing to one exact immutable live
+1. `AIRJAM_SYNTHETIC_HOSTED_RELEASE_URL` pointing to one exact immutable live
    generation
-3. `AIRJAM_SYNTHETIC_WORKER_ORIGIN` pointing to the operational worker's public
+2. `AIRJAM_SYNTHETIC_WORKER_ORIGIN` pointing to the operational worker's public
    health origin
-4. `AIRJAM_SYNTHETIC_BROWSER_WORKER_ORIGIN` pointing to the browser worker
-5. `AIRJAM_SYNTHETIC_APP_ID` when the platform app identity is not appropriate
+3. `AIRJAM_SYNTHETIC_BROWSER_WORKER_ORIGIN` pointing to the browser worker
+4. `AIRJAM_SYNTHETIC_APP_ID` when the platform app identity is not appropriate
+
+Do not set `AIRJAM_OPERATIONAL_ENVIRONMENT` on Railway. The provider-owned
+`RAILWAY_ENVIRONMENT_NAME` is authoritative, so production resolves to
+production while every PR environment resolves to preview even when Railway
+clones service variables. In PR environments, operational synthetics use the
+environment-scoped `RAILWAY_SERVICE_AIR_JAM_PLATFORM_URL`,
+`RAILWAY_SERVICE_AIR_JAM_SERVER_URL`,
+`RAILWAY_SERVICE_AIR_JAM_PLATFORM_WORKER_URL`, and
+`RAILWAY_SERVICE_AIR_JAM_RELEASE_BROWSER_WORKER_URL` targets instead of the
+production-oriented explicit origins above.
 
 The same worker is the sole continuous Railway budget-evidence collector.
 Configure `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, and an

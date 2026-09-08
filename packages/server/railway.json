@@ -18,7 +18,7 @@
   "deploy": {
     "startCommand": "pnpm --filter @air-jam/server start",
     "healthcheckPath": "/ready",
-    "healthcheckTimeout": 120,
+    "healthcheckTimeout": 600,
     "overlapSeconds": 0,
     "drainingSeconds": 30,
     "restartPolicyType": "ON_FAILURE",

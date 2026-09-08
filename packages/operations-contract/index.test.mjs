@@ -259,6 +259,24 @@ test("event delivery identity and environment derivation have one contract owner
     resolveDeploymentEnvironment({ RAILWAY_ENVIRONMENT_NAME: "pr-75" }),
     "preview",
   );
+  assert.equal(
+    resolveDeploymentEnvironment({
+      AIRJAM_OPERATIONAL_ENVIRONMENT: "production",
+      RAILWAY_ENVIRONMENT_NAME: "pr-75",
+    }),
+    "preview",
+  );
+  assert.equal(
+    resolveDeploymentEnvironment({
+      AIRJAM_OPERATIONAL_ENVIRONMENT: "preview",
+      RAILWAY_ENVIRONMENT_NAME: "production",
+    }),
+    "production",
+  );
+  assert.equal(
+    resolveDeploymentEnvironment({ AIRJAM_OPERATIONAL_ENVIRONMENT: "test" }),
+    "test",
+  );
 });
 
 test("structured failures remain bounded, explicit, and secret-free by contract", () => {

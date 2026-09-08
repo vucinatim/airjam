@@ -307,10 +307,22 @@ Synthetic targets:
 4. `AIRJAM_SYNTHETIC_APP_ID` selects the synthetic host app identity when the
    platform identity is not suitable
 
-Realtime runtime-reporting configuration:
+In Railway PR environments, Railway's environment-scoped sibling URLs are the
+target authority: `RAILWAY_SERVICE_AIR_JAM_PLATFORM_URL`,
+`RAILWAY_SERVICE_AIR_JAM_SERVER_URL`,
+`RAILWAY_SERVICE_AIR_JAM_PLATFORM_WORKER_URL`, and
+`RAILWAY_SERVICE_AIR_JAM_RELEASE_BROWSER_WORKER_URL`. They take precedence over
+production-oriented explicit origins so a cloned preview cannot probe the
+wrong environment.
 
-1. `AIRJAM_OPERATIONAL_ENVIRONMENT` explicitly labels retained events
-2. `AIR_JAM_RUNTIME_ERROR_REPORT_RATE_LIMIT_MAX` defaults to `30` per existing
+Runtime-reporting environment configuration:
+
+1. Railway's `RAILWAY_ENVIRONMENT_NAME` is authoritative when present:
+   `production` maps to production and every other Railway environment maps to
+   preview
+2. outside Railway, `AIRJAM_OPERATIONAL_ENVIRONMENT` explicitly labels retained
+   events
+3. `AIR_JAM_RUNTIME_ERROR_REPORT_RATE_LIMIT_MAX` defaults to `30` per existing
    server rate-limit window
 
 Production must configure every required synthetic target. Unconfigured

@@ -4,7 +4,10 @@ import {
   operationalSloEvaluations,
   operationalSyntheticRuns,
 } from "@/db/schema";
-import { resolvePlatformDeploymentConfig } from "@/lib/platform-deployment-config";
+import {
+  normalizeOrigin,
+  resolvePlatformDeploymentConfig,
+} from "@/lib/platform-deployment-config";
 import {
   createStructuredOperationalFailure,
   normalizeUnknownOperationalFailure,
@@ -136,15 +139,25 @@ const absoluteUrl = (value: string | undefined): string | null => {
 export const resolveOperationalSyntheticRuntimeConfig = (
   env: Record<string, string | undefined> = process.env,
 ): OperationalSyntheticRuntimeConfig => {
+  const environment = resolveDeploymentEnvironment(env);
   const platform = resolvePlatformDeploymentConfig(env as NodeJS.ProcessEnv);
-  const platformOrigin = new URL(platform.platformPublicUrl).origin;
-  const realtimeOrigin = new URL(platform.backendPublicUrl).origin;
-  const workerOrigin = absoluteUrl(env.AIRJAM_SYNTHETIC_WORKER_ORIGIN);
-  const browserWorkerOrigin = absoluteUrl(
-    env.AIRJAM_SYNTHETIC_BROWSER_WORKER_ORIGIN,
-  );
+  const previewServiceOrigin = (key: string): string | null =>
+    platform.isRailwayPreviewEnvironment ? normalizeOrigin(env[key]) : null;
+  const platformOrigin =
+    previewServiceOrigin("RAILWAY_SERVICE_AIR_JAM_PLATFORM_URL") ??
+    new URL(platform.platformPublicUrl).origin;
+  const realtimeOrigin =
+    previewServiceOrigin("RAILWAY_SERVICE_AIR_JAM_SERVER_URL") ??
+    new URL(platform.backendPublicUrl).origin;
+  const workerOrigin =
+    previewServiceOrigin("RAILWAY_SERVICE_AIR_JAM_PLATFORM_WORKER_URL") ??
+    absoluteUrl(env.AIRJAM_SYNTHETIC_WORKER_ORIGIN);
+  const browserWorkerOrigin =
+    previewServiceOrigin(
+      "RAILWAY_SERVICE_AIR_JAM_RELEASE_BROWSER_WORKER_URL",
+    ) ?? absoluteUrl(env.AIRJAM_SYNTHETIC_BROWSER_WORKER_ORIGIN);
   return {
-    environment: resolveDeploymentEnvironment(env),
+    environment,
     targets: Object.freeze({
       "platform.home": new URL("/", platformOrigin).toString(),
       "platform.docs": new URL("/docs", platformOrigin).toString(),
