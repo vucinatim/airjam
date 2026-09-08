@@ -30,10 +30,14 @@ The production Railway project should contain four deployable services:
 4. `air-jam-platform-worker`
 
 The platform and realtime Dockerfiles use the repository's Node 22 runtime
-floor. The operational worker must remain attached to
-`/apps/platform/railway.worker.json` so its build, bundled entrypoint,
-readiness boundary, and watched paths are source-owned rather than duplicated
-in Railway service settings.
+floor. `apps/platform/railway.worker.json` records the operational worker's
+required build, bundled entrypoint, readiness boundary, and watched paths.
+Railway no longer permits a new service to attach legacy per-service Config as
+Code, so the live provider settings must match that contract until the whole
+project is migrated atomically to one `.railway/railway.ts` Infrastructure as
+Code graph. Do not create a second partial or leave some services owned by each
+system; Railway forbids mixed ownership and stops reading legacy files on
+2026-12-01.
 
 Persistent infrastructure remains external:
 

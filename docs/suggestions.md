@@ -64,6 +64,7 @@ Only keep live follow-ups here. Completed reset work and stale migration notes s
 58. Decide whether hosted HTML bootstrap should preserve the immutable generation URL in visible browser history; its current `history.replaceState` to `/` means a direct visitor who reloads the rewritten release-host root receives the intentional platform-route `404`.
 59. Extend the published Railway/agentic-devtools surface with exact deployment stop/drain and correct custom-domain verification-token reads, so future agent-operated maintenance does not need the official CLI local MCP as a provider-gap fallback.
 60. After 1.0 produces real operational incidents, evaluate whether repeated agent workflows justify a generalized incident lifecycle, typed runbook extraction, or a dedicated loop/swarm scheduler. Start from retained issues, PRs, claims, and action evidence; add only the smallest missing coordination primitive instead of prebuilding a central self-healing platform.
+61. Migrate the complete Railway project from deprecated per-service `railway.json` files and duplicated provider settings to one reviewed `.railway/railway.ts` Infrastructure as Code graph before 1.0. Import and plan the whole production graph, preserve sealed variables, volumes, domains, source links, service identities, preview behavior, and deploy order, then delete every legacy config file in the same migration so Railway never has mixed ownership and the 2026-12-01 cutoff cannot break deploys.
 
 ## Framework Boundary Follow-Ups
 
