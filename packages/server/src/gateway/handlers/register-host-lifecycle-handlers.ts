@@ -124,6 +124,7 @@ export const registerHostLifecycleHandlers = (
     return {
       roomId,
       masterHostSocketId: socket.id,
+      hostResumeCapability: { token: uuidv4() },
       analytics,
       focus: startsInGameFocus ? "GAME" : "SYSTEM",
       launchCapability: undefined,
@@ -290,6 +291,7 @@ export const registerHostLifecycleHandlers = (
     players: buildHostRosterSnapshot(session),
     controllers: buildHostControllerSnapshot(session),
     controllerCapability: getControllerCapabilityForAck(session),
+    hostResumeCapability: session.hostResumeCapability,
   });
 
   const getHostLogger = (bindings: Record<string, unknown> = {}) => {
@@ -430,6 +432,7 @@ export const registerHostLifecycleHandlers = (
         appId: parsed.data.appId,
         hostGrant: parsed.data.hostGrant,
         origin: requestOrigin,
+        hostSessionKind: parsed.data.hostSessionKind,
       });
       if (!socket.connected) {
         return;
@@ -538,6 +541,21 @@ export const registerHostLifecycleHandlers = (
         return;
       }
 
+      if (socket.data.hostAuthority?.hostSessionKind !== "system") {
+        logHostEvent(
+          "warn",
+          AIRJAM_DEV_LOG_EVENTS.host.registerSystemRejected,
+          "Rejected system registration from a game-scoped host authority",
+          { reason: "system_host_authority_required" },
+        );
+        callback({
+          ok: false,
+          message: "Unauthorized: System host authority required",
+          code: ErrorCode.UNAUTHORIZED,
+        });
+        return;
+      }
+
       if (isStaticAppRateLimited("static-app-lifecycle")) {
         logHostEvent(
           "warn",
@@ -575,12 +593,46 @@ export const registerHostLifecycleHandlers = (
 
       const { roomId } = parsed.data;
 
+      const existingRoomId = roomManager.getRoomByHostId(socket.id);
+      if (existingRoomId && existingRoomId !== roomId) {
+        logHostEvent(
+          "warn",
+          AIRJAM_DEV_LOG_EVENTS.host.registerSystemRejected,
+          "Rejected repeated system registration for a different room",
+          {
+            roomId,
+            existingRoomId,
+            reason: "host_already_bound",
+          },
+        );
+        callback({
+          ok: false,
+          message: `Host is already registered to room ${existingRoomId}`,
+          code: ErrorCode.ALREADY_CONNECTED,
+        });
+        return;
+      }
+
       let session = roomManager.getRoom(roomId);
       if (session) {
+        if (session.masterHostSocketId !== socket.id) {
+          logHostEvent(
+            "warn",
+            AIRJAM_DEV_LOG_EVENTS.host.registerSystemRejected,
+            "Rejected system host registration because the room is already owned",
+            {
+              roomId,
+              reason: "resume_capability_required",
+            },
+          );
+          callback({
+            ok: false,
+            message: "Room ownership must be resumed by its existing host",
+            code: ErrorCode.UNAUTHORIZED,
+          });
+          return;
+        }
         clearPendingRoomCloseTimer(session);
-        session.masterHostSocketId = socket.id;
-        syncRoomAnalyticsState(session.analytics, socket.data.hostAuthority);
-        roomManager.setRoom(roomId, session);
       } else {
         const created = await createAndBindRoomForHost({
           roomId,
@@ -829,7 +881,7 @@ export const registerHostLifecycleHandlers = (
         return;
       }
 
-      const { roomId } = parsed.data;
+      const { roomId, resumeCapabilityToken } = parsed.data;
 
       const session = roomManager.getRoom(roomId);
       if (!session) {
@@ -850,6 +902,24 @@ export const registerHostLifecycleHandlers = (
         return;
       }
 
+      if (session.hostResumeCapability.token !== resumeCapabilityToken) {
+        logHostEvent(
+          "warn",
+          AIRJAM_DEV_LOG_EVENTS.host.reconnectRejected,
+          "Rejected host reconnect with an invalid resume capability",
+          {
+            roomId,
+            reason: "invalid_resume_capability",
+          },
+        );
+        callback({
+          ok: false,
+          message: "Invalid host resume capability",
+          code: ErrorCode.UNAUTHORIZED,
+        });
+        return;
+      }
+
       const previousMasterSocket = io.sockets.sockets.get(
         session.masterHostSocketId,
       );
@@ -862,7 +932,6 @@ export const registerHostLifecycleHandlers = (
         const previousGameState = session.runtimeState;
 
         session.masterHostSocketId = socket.id;
-        syncRoomAnalyticsState(session.analytics, socket.data.hostAuthority);
         roomManager.setRoom(roomId, session);
         roomManager.setHostRoom(socket.id, roomId);
         socket.join(roomId);

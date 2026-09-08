@@ -13,6 +13,7 @@ export const {
   operationalEventOutbox,
   operationalEvents,
   realtimeAdmissionInstances,
+  realtimeHostGrantConsumptions,
   realtimeControllerAdmissionLeases,
   realtimeRoomAdmissionLeases,
   runtimeUsageSessions,

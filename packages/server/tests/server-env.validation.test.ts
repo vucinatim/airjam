@@ -12,6 +12,42 @@ describe("loadServerEnv", () => {
     ).toThrow(EnvValidationError);
   });
 
+  it.each(["production", "preview"] as const)(
+    "does not accept AIR_JAM_MASTER_KEY as a hosted %s auth backend",
+    (operationalEnvironment) => {
+      expect(() =>
+        loadServerEnv({
+          AIR_JAM_AUTH_MODE: "required",
+          AIR_JAM_MASTER_KEY: "legacy-shared-key",
+          AIRJAM_OPERATIONAL_ENVIRONMENT: operationalEnvironment,
+          NODE_ENV: "production",
+        }),
+      ).toThrow(EnvValidationError);
+    },
+  );
+
+  it("preserves explicit local-development master-key auth", () => {
+    const config = loadServerEnv({
+      AIR_JAM_AUTH_MODE: "required",
+      AIR_JAM_MASTER_KEY: "local-development-key",
+      AIRJAM_OPERATIONAL_ENVIRONMENT: "development",
+      NODE_ENV: "development",
+    });
+
+    expect(config.masterKey).toBe("local-development-key");
+  });
+
+  it("does not let an operational test label enable a master key in a production process", () => {
+    expect(() =>
+      loadServerEnv({
+        AIR_JAM_AUTH_MODE: "required",
+        AIR_JAM_MASTER_KEY: "legacy-shared-key",
+        AIRJAM_OPERATIONAL_ENVIRONMENT: "test",
+        NODE_ENV: "production",
+      }),
+    ).toThrow(EnvValidationError);
+  });
+
   it("fails when rate limit env expects a positive integer", () => {
     expect(() =>
       loadServerEnv({

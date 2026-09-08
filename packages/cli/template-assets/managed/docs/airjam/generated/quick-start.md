@@ -182,13 +182,25 @@ import { createHostGrant } from "@air-jam/sdk/protocol";
 
 export async function POST(request: Request) {
   const { appId } = await request.json();
+  const { gameId, creatorId } = await loadTrustedAppIdentity(appId);
+  const abuseSessionId = await loadTrustedAbuseSessionId(request);
+  const now = Math.floor(Date.now() / 1000);
 
   const hostGrant = await createHostGrant({
     secret: process.env.AIR_JAM_HOST_GRANT_SECRET!,
     claims: {
+      jti: crypto.randomUUID(),
+      aud: "airjam:realtime",
       appId,
-      exp: Math.floor(Date.now() / 1000) + 60,
+      gameId,
+      creatorId,
+      iat: now,
+      exp: now + 60,
+      scopes: ["host:bootstrap"],
       origins: ["https://your-game.example"],
+      sessionKind: "game",
+      intent: "create_room",
+      abuseSessionId,
     },
   });
 
@@ -196,7 +208,12 @@ export async function POST(request: Request) {
 }
 ```
 
-That endpoint is also where you can add your own rules, for example checking the signed-in user or limiting which app IDs they are allowed to bootstrap.
+`loadTrustedAppIdentity` represents your server-side lookup; never copy game or
+creator identity from the browser request. `loadTrustedAbuseSessionId` should
+return a stable server-issued UUID from an authenticated session or signed
+anonymous cookie, never a browser-supplied value. That endpoint is also where
+you can add your own rules, for example checking the signed-in user or limiting
+which app IDs they are allowed to bootstrap.
 
 ## 6. Publish A Hosted Arcade Release
 

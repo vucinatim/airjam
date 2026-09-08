@@ -100,7 +100,6 @@ export const AIRJAM_DEV_LOG_EVENTS = {
     modeMasterKey: "auth.mode.master_key",
     modeDatabaseAndHostGrant: "auth.mode.database_and_host_grant",
     modeDatabase: "auth.mode.database",
-    modeHostGrantOnly: "auth.mode.host_grant_only",
     backendMissing: "auth.backend.missing",
     appIdLastUsedAtUpdateFailed: "auth.app_id_last_used_at_update.failed",
     appIdVerificationDatabaseError: "auth.app_id_verification.database_error",

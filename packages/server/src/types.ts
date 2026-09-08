@@ -6,6 +6,7 @@ import type {
   ControllerPrivilegedGrant,
   ControllerSource,
   ControllerStateMessage,
+  HostResumeCapability,
   HostSessionKind,
   PlayerProfile,
   RoomCode,
@@ -69,6 +70,7 @@ export type RoomLifecycleState =
 export interface RoomSession {
   roomId: RoomCode;
   masterHostSocketId: string; // Primary host socket for the room
+  hostResumeCapability: HostResumeCapability; // Bearer capability required to reclaim master ownership
   childHostSocketId?: string; // Secondary game host socket when launched from a system shell
   analytics: RoomAnalyticsState;
   focus: RoomFocus;

@@ -1,6 +1,6 @@
 # Air Jam Docs Index
 
-Last updated: 2026-09-04
+Last updated: 2026-09-08
 Status: current navigation
 
 This is the canonical navigation entry for the Air Jam repository.
@@ -85,6 +85,7 @@ privacy, and supply-chain security baseline is:
 
 1. [audits/v1-security/threat-model-audit.md](./audits/v1-security/threat-model-audit.md)
 2. [audits/v1-security/supply-chain-release-trust-proof.md](./audits/v1-security/supply-chain-release-trust-proof.md)
+3. [audits/v1-security/host-grant-authority-proof.md](./audits/v1-security/host-grant-authority-proof.md)
 
 The audit owns evidence and decisions. `G5-02` and `G5-03` in the readiness
 manifest own implementation and proof; the document is not a parallel backlog.
@@ -113,11 +114,12 @@ The measured Gate 3 production baseline is:
 5. [audits/v1-reliability/production-immutable-release-generations-proof.md](./audits/v1-reliability/production-immutable-release-generations-proof.md)
 6. [audits/v1-reliability/production-operational-job-worker-proof.md](./audits/v1-reliability/production-operational-job-worker-proof.md)
 7. [audits/v1-reliability/production-lifecycle-cleanup-proof.md](./audits/v1-reliability/production-lifecycle-cleanup-proof.md)
-8. [contracts/production-control-contract.md](./contracts/production-control-contract.md)
-9. [contracts/production-database-migration-contract.md](./contracts/production-database-migration-contract.md)
-10. [audits/v1-reliability/production-migration-lifecycle-proof.md](./audits/v1-reliability/production-migration-lifecycle-proof.md)
-11. [contracts/production-recovery-contract.md](./contracts/production-recovery-contract.md)
-12. [audits/v1-reliability/production-recovery-proof.md](./audits/v1-reliability/production-recovery-proof.md)
+8. [audits/v1-reliability/production-realtime-admission-proof.md](./audits/v1-reliability/production-realtime-admission-proof.md)
+9. [contracts/production-control-contract.md](./contracts/production-control-contract.md)
+10. [contracts/production-database-migration-contract.md](./contracts/production-database-migration-contract.md)
+11. [audits/v1-reliability/production-migration-lifecycle-proof.md](./audits/v1-reliability/production-migration-lifecycle-proof.md)
+12. [contracts/production-recovery-contract.md](./contracts/production-recovery-contract.md)
+13. [audits/v1-reliability/production-recovery-proof.md](./audits/v1-reliability/production-recovery-proof.md)
 
 It distinguishes the current low-cost, low-usage production state from the
 queues, quotas, recovery, static-delivery, and operational controls still
@@ -143,7 +145,17 @@ The lifecycle-cleanup proof records exact retry-safe deletion for temporary
 artifacts and media plus the complete superseded-unpublished lifecycle: a
 180-day inactivity clock, durable seven-day creator warning, safe export and
 retention renewal through dashboard/API/CLI/MCP, and PostgreSQL-enforced
-cleanup eligibility.
+cleanup eligibility. That complete retention lifecycle is live in production
+through PR `#102`, main revision `5a30c1a4`, and migration `0037`.
+
+The realtime-admission proof records the locally implemented PostgreSQL
+instance, room, and controller lease authority; unchanged room-code/join UX;
+normal-mode 300-room/4,800-controller burst ceilings over 100/1,600 sustained
+targets; restricted-only creator/game enforcement at 50 rooms; drain and
+failure behavior; and stable CLI inspection. It explicitly does not claim a
+reviewed merge, the phased `0038`/`0039` rollout, production load, overload, or
+dependency-recovery proof. Host bootstrap and room-master authority are kept in
+the separate Gate 5 host-grant proof rather than conflated with capacity.
 
 The detailed discoverability checklist remains a subordinate launch reference:
 
@@ -161,8 +173,9 @@ competing as parallel product architectures.
 The roadmap gates define the product sequence and the readiness manifest derives
 the currently executable queue. The next independent work is:
 
-1. finish Gate `G3-02` realtime admission and overload proof, then roll out the
-   complete storage-retention lifecycle and operational worker safely
+1. finish review, rollout, and measured overload/dependency proof for Gate
+   `G3-02` realtime admission, then activate and observe the operational worker;
+   the complete storage-retention lifecycle is already live
 2. close the remaining ranked Gate 5 security findings after the completed
    `games.air-jam.app` production cutover
 3. project confirmed operational alert keys into maintained GitHub

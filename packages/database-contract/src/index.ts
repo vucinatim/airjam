@@ -884,6 +884,40 @@ export const createRuntimeDatabaseSchema = ({
     ],
   );
 
+  const realtimeHostGrantConsumptions = pgTable(
+    "realtime_host_grant_consumptions",
+    {
+      jti: text("jti").primaryKey(),
+      appId: text("app_id").notNull(),
+      abuseSessionId: text("abuse_session_id").notNull(),
+      sessionKind: text("session_kind").notNull(),
+      intent: text("intent").notNull(),
+      consumedAt: timestamp("consumed_at", { withTimezone: true })
+        .defaultNow()
+        .notNull(),
+      expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    },
+    (table) => [
+      index("realtime_host_grant_consumptions_expiry_idx").on(table.expiresAt),
+      check(
+        "realtime_host_grant_consumptions_required_text_check",
+        sql`length(btrim(${table.jti})) > 0 and length(btrim(${table.appId})) > 0 and length(btrim(${table.abuseSessionId})) > 0`,
+      ),
+      check(
+        "realtime_host_grant_consumptions_session_kind_check",
+        sql`${table.sessionKind} in ('game', 'system')`,
+      ),
+      check(
+        "realtime_host_grant_consumptions_intent_check",
+        sql`${table.intent} in ('create_room', 'system_register')`,
+      ),
+      check(
+        "realtime_host_grant_consumptions_chronology_check",
+        sql`${table.expiresAt} > ${table.consumedAt}`,
+      ),
+    ],
+  );
+
   const realtimeRoomAdmissionLeases = pgTable(
     "realtime_room_admission_leases",
     {
@@ -1594,6 +1628,7 @@ export const createRuntimeDatabaseSchema = ({
     runtimeUsageDailyGameMetrics,
     operationalLaneControls,
     realtimeAdmissionInstances,
+    realtimeHostGrantConsumptions,
     realtimeRoomAdmissionLeases,
     realtimeControllerAdmissionLeases,
     operationalControlEvents,

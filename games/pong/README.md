@@ -396,13 +396,25 @@ import { createHostGrant } from "@air-jam/sdk/protocol";
 
 export async function POST(request: Request) {
   const { appId } = await request.json();
+  const { gameId, creatorId } = await loadTrustedAppIdentity(appId);
+  const abuseSessionId = await loadTrustedAbuseSessionId(request);
+  const now = Math.floor(Date.now() / 1000);
 
   const hostGrant = await createHostGrant({
     secret: process.env.AIR_JAM_HOST_GRANT_SECRET!,
     claims: {
+      jti: crypto.randomUUID(),
+      aud: "airjam:realtime",
       appId,
-      exp: Math.floor(Date.now() / 1000) + 60,
+      gameId,
+      creatorId,
+      iat: now,
+      exp: now + 60,
+      scopes: ["host:bootstrap"],
       origins: ["https://your-game.example"],
+      sessionKind: "game",
+      intent: "create_room",
+      abuseSessionId,
     },
   });
 
@@ -411,6 +423,8 @@ export async function POST(request: Request) {
 ```
 
 The SDK fetches that grant automatically before `host:bootstrap`. Your host/controller game code does not change.
+`loadTrustedAppIdentity` must be a server-side lookup; never trust game or creator identity supplied by the browser.
+`loadTrustedAbuseSessionId` must return a stable server-issued UUID from an authenticated session or signed anonymous cookie, never a browser-supplied value.
 
 ### Building for Production
 

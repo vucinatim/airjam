@@ -6,6 +6,7 @@ import { setupServerTestHarness } from "./helpers/server-test-harness";
 type HostCreateRoomAck = {
   ok: boolean;
   roomId?: string;
+  hostResumeCapability?: { token: string };
 };
 
 const allowAllAuthService = {
@@ -92,6 +93,7 @@ describe("server state sync", () => {
 
     expect(createAck.ok).toBe(true);
     const roomId = createAck.roomId!;
+    const resumeCapabilityToken = createAck.hostResumeCapability!.token;
 
     host.emit("host:state_sync", {
       roomId,
@@ -131,7 +133,7 @@ describe("server state sync", () => {
     }>((resolve) => {
       reconnectingHost.emit(
         "host:reconnect",
-        { roomId },
+        { roomId, resumeCapabilityToken },
         (ack: { ok: boolean; roomId?: string }) => {
           reconnectSequence.push("ack");
           resolve(ack);
@@ -165,6 +167,7 @@ describe("server state sync", () => {
       { maxPlayers: 4 },
     );
     const roomId = createAck.roomId!;
+    const resumeCapabilityToken = createAck.hostResumeCapability!.token;
 
     const launchAck = await harness.emitWithAck<{ ok: boolean }>(
       host,
@@ -195,7 +198,10 @@ describe("server state sync", () => {
         gameId: string;
       };
       arcadeSurfaceCheckpoint?: { epoch: number; revision: number };
-    }>(reconnectingHost, "host:reconnect", { roomId });
+    }>(reconnectingHost, "host:reconnect", {
+      roomId,
+      resumeCapabilityToken,
+    });
     await harness.delay(25);
 
     expect(reconnectAck).toMatchObject({
@@ -216,6 +222,7 @@ describe("server state sync", () => {
       { maxPlayers: 4 },
     );
     const roomId = createAck.roomId!;
+    const resumeCapabilityToken = createAck.hostResumeCapability!.token;
 
     host.emit("host:state_sync", {
       roomId,
@@ -237,7 +244,10 @@ describe("server state sync", () => {
       ok: boolean;
       arcadeSession?: { gameId: string };
       arcadeSurfaceCheckpoint?: { epoch: number; revision: number };
-    }>(reconnectingHost, "host:reconnect", { roomId });
+    }>(reconnectingHost, "host:reconnect", {
+      roomId,
+      resumeCapabilityToken,
+    });
     await harness.delay(25);
 
     expect(reconnectAck).toMatchObject({
