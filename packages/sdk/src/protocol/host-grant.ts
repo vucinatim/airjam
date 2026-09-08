@@ -1,14 +1,24 @@
 import { z } from "zod";
+import { hostSessionKindSchema } from "./host";
 
 export const hostGrantScopeSchema = z.literal("host:bootstrap");
+export const hostGrantAudienceSchema = z.literal("airjam:realtime");
+export const hostGrantIntentSchema = z.enum(["create_room", "system_register"]);
 
 export const hostGrantClaimsSchema = z.object({
-  typ: z.literal("airjam.host_grant.v1"),
+  typ: z.literal("airjam.host_grant.v3"),
+  jti: z.string().uuid(),
+  aud: hostGrantAudienceSchema,
   appId: z.string().min(1),
+  gameId: z.string().min(1),
+  creatorId: z.string().min(1),
   exp: z.number().int().positive(),
-  iat: z.number().int().positive().optional(),
+  iat: z.number().int().positive(),
   scopes: z.array(hostGrantScopeSchema).min(1).default(["host:bootstrap"]),
-  origins: z.array(z.string().min(1)).optional(),
+  origins: z.array(z.string().url()).min(1),
+  sessionKind: hostSessionKindSchema,
+  intent: hostGrantIntentSchema,
+  abuseSessionId: z.string().uuid(),
 });
 
 export type HostGrantClaims = z.infer<typeof hostGrantClaimsSchema>;
@@ -97,8 +107,7 @@ const timingSafeEqual = (a: Uint8Array, b: Uint8Array): boolean => {
 
 export interface CreateHostGrantInput {
   secret: string;
-  claims: Pick<HostGrantClaims, "appId" | "exp"> &
-    Partial<Pick<HostGrantClaims, "typ" | "iat" | "scopes" | "origins">>;
+  claims: Omit<HostGrantClaims, "typ"> & Partial<Pick<HostGrantClaims, "typ">>;
 }
 
 export const createHostGrant = async ({
@@ -106,7 +115,7 @@ export const createHostGrant = async ({
   claims,
 }: CreateHostGrantInput): Promise<string> => {
   const normalizedClaims = hostGrantClaimsSchema.parse({
-    typ: "airjam.host_grant.v1",
+    typ: "airjam.host_grant.v3",
     ...claims,
   });
 
@@ -148,8 +157,11 @@ export const verifyHostGrant = async ({
 
   try {
     const parsedHeader = decodeJson<{ alg?: string; typ?: string }>(header!);
-    if (parsedHeader.alg !== "HS256") {
-      return { ok: false, error: "Unsupported host grant algorithm" };
+    if (
+      parsedHeader.alg !== "HS256" ||
+      parsedHeader.typ !== "AIRJAM_HOST_GRANT"
+    ) {
+      return { ok: false, error: "Unsupported host grant header" };
     }
 
     const expectedSignature = await signHmacSha256(
@@ -169,6 +181,14 @@ export const verifyHostGrant = async ({
 
     if (parsedClaims.data.exp <= now) {
       return { ok: false, error: "Host grant expired" };
+    }
+
+    if (
+      parsedClaims.data.iat > now + 30 ||
+      parsedClaims.data.exp <= parsedClaims.data.iat ||
+      parsedClaims.data.exp - parsedClaims.data.iat > 120
+    ) {
+      return { ok: false, error: "Invalid host grant lifetime" };
     }
 
     if (!parsedClaims.data.scopes.includes("host:bootstrap")) {

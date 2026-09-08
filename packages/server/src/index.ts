@@ -188,6 +188,7 @@ export const createAirJamServer = (
         hostGrantSecret: envConfig.hostGrantSecret,
         databaseUrl: envConfig.databaseUrl,
         nodeEnv: envConfig.nodeEnv,
+        operationalEnvironment: envConfig.operationalEnvironment,
       },
       db,
       operationalEventPublisher,

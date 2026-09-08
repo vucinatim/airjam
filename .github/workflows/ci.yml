@@ -39,7 +39,7 @@ jobs:
               env DATABASE_URL="$AIR_JAM_CI_DATABASE_URL" pnpm --filter platform exec drizzle-kit migrate &&
               env AIR_JAM_TEST_DATABASE_URL="$AIR_JAM_CI_DATABASE_URL" node --test scripts/repo/runtime/operational-reliability-cli-contract.test.mjs &&
               env AIR_JAM_TEST_DATABASE_URL="$AIR_JAM_CI_DATABASE_URL" pnpm --filter platform test -- src/server/operations/operational-reliability-service.postgres.test.ts src/server/operations/operational-alert-issue-projection-service.postgres.test.ts src/server/operations/platform-schema-migration-run-service.postgres.test.ts src/server/operations/realtime-admission-migration.postgres.test.ts src/server/operations/realtime-admission-inspection-service.postgres.test.ts src/server/operations/production-budget-refresh-service.postgres.test.ts &&
-              env AIR_JAM_TEST_DATABASE_URL="$AIR_JAM_CI_DATABASE_URL" pnpm --filter server test -- --run tests/operational-event-publisher.postgres.test.ts tests/auth-service.postgres.test.ts tests/realtime-admission-service.postgres.test.ts
+              env AIR_JAM_TEST_DATABASE_URL="$AIR_JAM_CI_DATABASE_URL" pnpm --filter server test -- --run tests/operational-event-publisher.postgres.test.ts tests/auth-service.postgres.test.ts tests/host-grant-lifecycle.integration.test.ts tests/realtime-admission-service.postgres.test.ts
             postgresImage: postgres:17-alpine
             databaseUrl: postgresql://postgres:postgres@localhost:5432/airjam_test
           - name: Workspace build

@@ -155,44 +155,48 @@ Current focused evidence covers:
 3. an expired instance being excluded from capacity and its stale room code
    being reclaimed
 4. canonical app-credential resolution to both game and creator identity
-5. socket-boundary denial before local room or controller mutation, while
+5. active-only host-grant lookup, with an inactive or absent app credential
+   receiving no signed grant
+6. socket-boundary denial before local room or controller mutation, while
    preserving the existing user-facing error contract
-6. platform quota reads deriving concurrent room usage from live admission
+7. platform quota reads deriving concurrent room usage from live admission
    leases rather than a process-local approximation
-7. fresh application of the migration catalog through migration `0039`, with
+8. fresh application of the migration catalog through migration `0040`, with
    the canonical migration inspector reporting the exact source and database
    head as `ready`
-8. an exact rolling `0037` to `0038` to `0039` upgrade containing existing
+9. an exact rolling `0037` to `0038` to `0039` upgrade containing existing
    active and inactive app/game rows plus writes from both deployment versions:
    nullable expand, two-phase creator backfill, validated `NOT NULL`, the
    composite game/creator ownership foreign key, and PostgreSQL rejection of
    invalid ownership pairs
-9. exact global-controller boundaries, creator/game shadow versus restricted
-   enforcement, budget protection and ceiling states, missing/stale evidence,
-   and resume behavior during pause, drain, and dependency loss
-10. deterministic socket races where room teardown, controller leave, resume
+10. exact global-controller boundaries, creator/game shadow versus restricted
+    enforcement, budget protection and ceiling states, missing/stale evidence,
+    and resume behavior during pause, drain, and dependency loss
+11. deterministic socket races where room teardown, controller leave, resume
     expiry, or disconnect wins while admission is pending, including immediate
     local authority revocation before a slow durable release completes
-11. machine-readable CLI inspection of an empty local authority with the exact
+12. machine-readable CLI inspection of an empty local authority with the exact
     policy and zero fabricated activity
-12. rollout handoff preflight that leaves a healthy incumbent accepting when a
+13. rollout handoff preflight that leaves a healthy incumbent accepting when a
     candidate lacks fresh authority, plus incumbent recovery after an activated
     candidate disappears
-13. heartbeat-owned reclamation of expired instance rows and their cascaded room
+14. heartbeat-owned reclamation of expired instance rows and their cascaded room
     and controller leases
 
-Signed host-grant and host-resume hardening intentionally remains outside this
-capacity slice and follows as a separate Gate 5 security change.
+Signed host-grant and host-resume authority is security evidence owned by the
+[host grant authority proof](../v1-security/host-grant-authority-proof.md), not
+by this capacity proof.
 
-The exact intermediate realtime-admission boundary passed on 2026-09-08 under
-the repository's Node 22 runtime: all typechecks, 269 SDK tests, 156 ordinary
-server tests, 379 ordinary platform tests, 14 admission/identity PostgreSQL
-server tests, and 14 focused platform PostgreSQL tests. The broader integrated
-batch had already passed canonical guards, lint, repo contracts, builds, and
-the protected PostgreSQL lane. Canonicalizer returned `ready` after the shared
-operational-authority readers and live-instance predicate were reduced to one
-owner. This is local delivery evidence, not a production claim: protected PR
-CI, GitHub-native final review, and production validation still have to pass.
+The post-edit complete local batch passed on 2026-09-08 with the protected
+PostgreSQL lane enabled: canonical guards, typechecks, lint, repo contracts,
+194 server tests, 281 SDK tests, and 453 platform tests all passed. The batch
+also exposed and removed one ambient hosted-release configuration dependency
+from the PostgreSQL release-generation test, so the protected lane is
+hermetic. Canonicalizer then returned `ready` after the shared operational-
+authority readers, live-instance predicate, and local-master-key eligibility
+were reduced to one owner and the complete batch passed again. This is complete
+local delivery evidence, not a production claim: protected PR CI,
+GitHub-native final review, and production validation still have to pass.
 
 ## Remaining Gate And Rollout Proof
 

@@ -20,6 +20,7 @@ import type { RoomSession } from "../src/types";
 const createSession = (): RoomSession => ({
   roomId: "ABCD",
   masterHostSocketId: "host-master",
+  hostResumeCapability: { token: "host-resume-token" },
   analytics: {
     runtimeSessionId: "runtime-session-1",
     startedAt: Date.now(),

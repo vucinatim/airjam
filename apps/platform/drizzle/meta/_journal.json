@@ -281,6 +281,13 @@
       "when": 1788835643710,
       "tag": "0039_realtime_admission_contract",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1788835707497,
+      "tag": "0040_host_grant_consumption",
+      "breakpoints": true
     }
   ]
 }

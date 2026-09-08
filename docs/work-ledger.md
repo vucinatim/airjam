@@ -1,6 +1,6 @@
 # Air Jam Work Ledger
 
-Last updated: 2026-09-04
+Last updated: 2026-09-08
 Status: historical memory
 
 This file is the append-only historical memory for the repo.
@@ -17,6 +17,65 @@ For the current snapshot, use [current-state.md](./current-state.md).
 The pre-reset overloaded ledger has been preserved at:
 
 1. [archive/2026-05-08-work-ledger-pre-os-reset.md](./archive/2026-05-08-work-ledger-pre-os-reset.md)
+
+## 2026-09-08 - Retention Went Live And Realtime Admission Reached Local Proof
+
+- merged reviewed PR `#102` and deployed exact main revision
+  `5a30c1a415f64dcc901dcb42b26a6e1df429eb8c`, making the complete superseded-
+  unpublished release lifecycle live in production through verified migration
+  `0037`
+- moved 180-day inactivity, durable seven-day creator warning, safe generation
+  export, retention renewal, and PostgreSQL-enforced cleanup eligibility from a
+  rollout claim to a production fact; activation of the separate operational
+  worker remains owned by `G3-08`
+- implemented the next `G3-02` slice on its working branch: PostgreSQL-backed
+  realtime instance, room, and controller admission leases while keeping
+  latency-sensitive gameplay state inside the realtime process
+- kept the room-code and controller-join UX unchanged and ratified generous
+  normal-mode burst ceilings of 300 rooms and 4,800 controllers over sustained
+  targets of 100 and 1,600; creator/game room allowances of 50 remain shadow
+  policy unless the room lane is deliberately restricted
+- added stable machine inspection through
+  `platform operations realtime status`, fail-closed new-work behavior,
+  resumable existing-controller handling, graceful drain state, crash expiry,
+  and creator/game identity at the shared app-credential boundary
+- exercised the focused lifecycle, exact room-ceiling race, stale-instance,
+  identity, socket-boundary, quota, fresh-migration, and CLI paths against an
+  isolated local PostgreSQL authority
+- retained an honest delivery boundary in the
+  [production realtime admission proof](./audits/v1-reliability/production-realtime-admission-proof.md):
+  the admission implementation is not merged or live; final boundary coverage,
+  full gates, protected review, guarded migration, exact deployment, and load/
+  dependency/recovery proof remain open
+- replaced the unsafe one-step ownership/admission migration with a real
+  expand/writer/contract sequence: `0038` adds nullable app creator identity
+  and backfills existing rows, the adjacent platform deployment always writes
+  that identity, and `0039` performs a second overlap backfill, validates the
+  named non-null constraint, and adds realtime admission authority
+- proved both an exact rolling upgrade from production migration `0037` with
+  old and new writers overlapping and a fresh PostgreSQL 14 catalog through
+  `0040`, which the canonical inspector classified as `ready`
+- recorded the independent integration findings instead of accepting the first
+  green batch: critical PostgreSQL suites now belong to protected CI, Railway
+  evidence collection no longer holds database authority across provider I/O,
+  repeated system registration preserves the original room, game-scoped grants
+  cannot register a system host, and hosted master-key authentication is gone
+- implemented and documented the local
+  [host grant authority proof](./audits/v1-security/host-grant-authority-proof.md):
+  non-forgeable anonymous launch identity, exact-origin v3 grants, one-winner
+  PostgreSQL consumption, explicit audience/session/intent claims, and server-
+  issued room resume capabilities close the `AJ-SEC-003` design without adding
+  user-visible permission or join flows; coordinated migration `0040` rollout
+  and hostile-path production proof remain open
+- passed the complete post-edit local batch with the protected PostgreSQL lane:
+  canonical guards, typechecks, lint, repo contracts, 194 server tests, 281 SDK
+  tests, and 453 platform tests; the run also found and removed an ambient
+  hosted-release configuration dependency from a PostgreSQL test before the
+  batch was accepted as evidence
+- completed the one pre-push Canonicalizer session with a `ready` verdict after
+  consolidating operational-authority readers, realtime live-instance policy,
+  and local-master-key eligibility into their canonical shared owners; the
+  complete PostgreSQL-enabled batch passed again after those review fixes
 
 ## 2026-09-04 - Production Recovery Was Automated And Live-Proven
 

@@ -68,11 +68,15 @@ test("CI preserves every confidence lane behind one stable required check", () =
     lanes[2].command,
     /operational-event-publisher\.postgres\.test\.ts/u,
   );
+  assert.match(lanes[2].command, /auth-service\.postgres\.test\.ts/u);
+  assert.match(
+    lanes[2].command,
+    /host-grant-lifecycle\.integration\.test\.ts/u,
+  );
   assert.match(
     lanes[2].command,
     /realtime-admission-service\.postgres\.test\.ts/u,
   );
-  assert.match(lanes[2].command, /auth-service\.postgres\.test\.ts/u);
   assert.equal(lanes[2].postgresImage, "postgres:17-alpine");
   assert.match(lanes[2].databaseUrl, /^postgresql:\/\//u);
   assert.deepEqual(

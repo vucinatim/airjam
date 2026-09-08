@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-09-04
+Last updated: 2026-09-08
 Status: current snapshot
 
 This is the canonical quick-read status surface for the Air Jam repo.
@@ -434,6 +434,17 @@ highest-priority result is that creator-controlled executable game bytes must
 move to a dedicated cookieless origin with strict iframe and browser policies
 before 1.0. The audit deliberately leaves implementation open in `G5-02` and
 `G5-03`; it does not treat documenting a threat as fixing it.
+
+The working branch now contains the locally proven
+[host grant and host resume authority slice](./audits/v1-security/host-grant-authority-proof.md)
+for `AJ-SEC-003`: an anonymous signed launch session, exact-origin v3 grants
+with abuse identity and single-use PostgreSQL consumption, system-versus-game
+intent enforcement, server-issued room resume capabilities, repeated-system-
+registration protection, and removal of hosted master-key authentication.
+The normal Arcade, room-code, and controller UX is unchanged. This remains a
+local implementation claim until migration `0040`, the coordinated breaking
+cutover, hostile-path smoke checks, and exact production evidence pass.
+
 Gate `G4-01` is closed with the
 [operational events and incidents contract](./contracts/operational-events-and-incidents-contract.md)
 and its [proof](./audits/v1-operations/operational-contract-proof.md). The
@@ -525,8 +536,28 @@ tombstones control quota accounting, and the canonical CLI provides redacted
 preview/apply plus resource-filtered inspection. Superseded unpublished
 generations now also have a PostgreSQL-enforced 180-day lifecycle with a
 durable seven-day warning, creator export through dashboard/API/CLI/MCP, and
-retention renewal when exported or published. Realtime admission, overload
-proof, and explicit production rollout remain part of the unfinished gate.
+retention renewal when exported or published. This complete retention slice is
+live in production through reviewed PR `#102`, main revision
+`5a30c1a415f64dcc901dcb42b26a6e1df429eb8c`, and verified migration `0037`.
+Its production rollout is no longer open. The operational worker remains a
+separate activation item under `G3-08`.
+
+Its eighth slice is the locally implemented
+[production realtime admission proof](./audits/v1-reliability/production-realtime-admission-proof.md).
+PostgreSQL owns lightweight instance, room, and controller leases while the
+realtime process continues to own gameplay hot state. The ordinary room-code
+and controller-join UX is unchanged. Normal mode preserves generous burst
+ceilings of 300 rooms and 4,800 controllers over sustained targets of 100 and
+1,600; the 50-room creator/game policy remains observational until the room
+lane is deliberately restricted. The canonical repo CLI can inspect shared
+capacity and drain state without exposing leases or gameplay state. Migration
+`0038` now owns the nullable app-creator identity expansion and compatible
+platform writer rollout; migration `0039` owns the validated non-null contract
+and realtime admission tables. The exact `0037` rolling upgrade and a fresh
+catalog through `0040` pass locally. The service, socket integration, and
+focused PostgreSQL proof still exist only on the working branch: reviewed
+merge, production rollout, sustained/burst load, overload, dependency-failure,
+and recovery proof remain open. Gate `G3-02` therefore remains active.
 
 The previous narrow v1 closeout plan was superseded by the 1.0 roadmap and is
 preserved in the
@@ -565,9 +596,10 @@ In short:
 1. keep the now-complete canonical production migration lifecycle and schema
    compatibility boundary stable; `G3-06` is merged, applied, and independently
    verified against the exact Railway production deployment
-2. finish invisible realtime admission in `G3-02`, then provision and observe
-   the operational worker and the now-implemented storage retention lifecycle
-   safely
+2. finish the phased `0038` app-ownership expand/writer rollout, then review,
+   deploy, and measure the invisible realtime admission slice through `0039`;
+   coordinate the `0040` host-authority cutover under paused new-room admission
+   before provisioning and observing the operational worker safely
 3. provision an isolated ephemeral Railway/R2 rehearsal profile and unblock the
    Codex plus Claude Desktop golden-path proofs
 4. keep the completed recovery contract stable and finish supply-chain trust as

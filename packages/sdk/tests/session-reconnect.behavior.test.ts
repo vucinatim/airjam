@@ -13,6 +13,10 @@ import { useAirJamController } from "../src/hooks/use-air-jam-controller";
 import { useAirJamHost } from "../src/hooks/use-air-jam-host";
 import { resolveAirJamConfig } from "../src/runtime/air-jam-config";
 import { resetControllerRealtimeClientForTests } from "../src/runtime/controller-realtime-client";
+import {
+  AIRJAM_DEV_RUNTIME_EVENT,
+  type AirJamDevRuntimeEventDetail,
+} from "../src/runtime/dev-runtime-events";
 import { resetHostRealtimeClientForTests } from "../src/runtime/host-realtime-client";
 import {
   AirJamControllerRuntime,
@@ -108,6 +112,16 @@ const TEST_CONFIG = resolveAirJamConfig({
   topology: PROVIDER_CONFIG.topology,
   resolveEnv: false,
 });
+const TEST_HOST_RESUME_CAPABILITY = { token: "host-resume-token" };
+
+const persistTestHostSession = (roomId = "ROOM1"): void => {
+  sessionStorage.setItem("airjam_room_id", roomId);
+  sessionStorage.setItem(
+    "airjam_host_resume_capability",
+    TEST_HOST_RESUME_CAPABILITY.token,
+  );
+};
+
 const withArcadeRuntimeTopology = (
   path: string,
   surfaceRole: "host" | "controller",
@@ -161,6 +175,7 @@ const createControllerWrapper =
 describe("session reconnect behavior", () => {
   beforeEach(() => {
     window.history.replaceState({}, "", "/");
+    sessionStorage.clear();
     mocked.store = createAirJamStore();
     mocked.controllerSocket = mocked.createMockSocket();
     mocked.hostSocket = mocked.createMockSocket();
@@ -219,7 +234,9 @@ describe("session reconnect behavior", () => {
     let joinAttempts = 0;
     mocked.controllerSocket.emit.mockImplementation(
       (event: string, _payload: unknown, callback?: (ack: unknown) => void) => {
-        if (event !== "controller:join") return;
+        if (event !== "controller:join") {
+          return;
+        }
         joinAttempts += 1;
         callback?.(
           joinAttempts === 1
@@ -423,17 +440,366 @@ describe("session reconnect behavior", () => {
     });
   });
 
+  it("retries host room admission and persists the resulting resume capability", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    sessionStorage.clear();
+    let createAttempts = 0;
+    mocked.hostSocket.emit.mockImplementation(
+      (event: string, _payload: unknown, callback?: (ack: unknown) => void) => {
+        if (event === "host:bootstrap") {
+          callback?.({ ok: true });
+          return;
+        }
+        if (event === "host:createRoom") {
+          createAttempts += 1;
+          callback?.(
+            createAttempts === 1
+              ? {
+                  ok: false,
+                  code: "SERVICE_UNAVAILABLE",
+                  message: "Room admission is busy",
+                  retryAfterSeconds: 1,
+                }
+              : {
+                  ok: true,
+                  roomId: "ROOM1",
+                  hostResumeCapability: TEST_HOST_RESUME_CAPABILITY,
+                },
+          );
+        }
+      },
+    );
+
+    const { result } = renderHook(() => useAirJamHost(), {
+      wrapper: createHostWrapper(),
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(createAttempts).toBe(1);
+    expect(result.current.connectionStatus).toBe("connecting");
+    expect(result.current.lastError).toBe("Room admission is busy");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(createAttempts).toBe(2);
+    expect(result.current.connectionStatus).toBe("connected");
+    expect(result.current.lastError).toBeUndefined();
+    expect(sessionStorage.getItem("airjam_room_id")).toBe("ROOM1");
+    expect(sessionStorage.getItem("airjam_host_resume_capability")).toBe(
+      TEST_HOST_RESUME_CAPABILITY.token,
+    );
+  });
+
+  it("cancels a pending host admission retry on unmount", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    sessionStorage.clear();
+    let createAttempts = 0;
+    mocked.hostSocket.emit.mockImplementation(
+      (event: string, _payload: unknown, callback?: (ack: unknown) => void) => {
+        if (event === "host:bootstrap") {
+          callback?.({ ok: true });
+          return;
+        }
+        if (event === "host:createRoom") {
+          createAttempts += 1;
+          callback?.({
+            ok: false,
+            code: "SERVICE_UNAVAILABLE",
+            message: "Room admission is busy",
+            retryAfterSeconds: 1,
+          });
+        }
+      },
+    );
+
+    const { unmount } = renderHook(() => useAirJamHost(), {
+      wrapper: createHostWrapper(),
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(createAttempts).toBe(1);
+
+    unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(createAttempts).toBe(1);
+  });
+
+  it("retries a reset admission denial and preserves structured attempt events", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    let resetAttempts = 0;
+    const runtimeEvents: AirJamDevRuntimeEventDetail[] = [];
+    const runtimeEventHandler = (event: Event) => {
+      runtimeEvents.push(
+        (event as CustomEvent<AirJamDevRuntimeEventDetail>).detail,
+      );
+    };
+    window.addEventListener(AIRJAM_DEV_RUNTIME_EVENT, runtimeEventHandler);
+    mocked.hostSocket.emit.mockImplementation(
+      (event: string, _payload: unknown, callback?: (ack: unknown) => void) => {
+        if (event === "host:bootstrap") {
+          callback?.({ ok: true });
+          return;
+        }
+        if (event === "host:createRoom") {
+          callback?.({
+            ok: true,
+            roomId: "ROOM1",
+            hostResumeCapability: TEST_HOST_RESUME_CAPABILITY,
+          });
+          return;
+        }
+        if (event === "host:resetRoom") {
+          resetAttempts += 1;
+          callback?.(
+            resetAttempts === 1
+              ? {
+                  ok: false,
+                  code: "SERVICE_UNAVAILABLE",
+                  message: "Reset admission is busy",
+                  retryAfterSeconds: 1,
+                }
+              : {
+                  ok: true,
+                  roomId: "ROOM2",
+                  hostResumeCapability: { token: "reset-resume-token" },
+                },
+          );
+        }
+      },
+    );
+
+    const { result, unmount } = renderHook(() => useAirJamHost(), {
+      wrapper: createHostWrapper(),
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const resetPromise = result.current.resetRoom();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(resetAttempts).toBe(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(999);
+    });
+    expect(resetAttempts).toBe(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+
+    await expect(resetPromise).resolves.toMatchObject({
+      ok: true,
+      roomId: "ROOM2",
+    });
+    expect(resetAttempts).toBe(2);
+    expect(result.current.roomId).toBe("ROOM2");
+    expect(sessionStorage.getItem("airjam_host_resume_capability")).toBe(
+      "reset-resume-token",
+    );
+    expect(
+      runtimeEvents
+        .filter(({ event }) => event === "runtime.host.reset_room.requested")
+        .map(({ data }) => data),
+    ).toEqual([
+      { admissionAttempt: 1 },
+      {
+        admissionAttempt: 2,
+        retryReasonCode: "SERVICE_UNAVAILABLE",
+        retryAfterSeconds: 1,
+      },
+    ]);
+
+    unmount();
+    window.removeEventListener(AIRJAM_DEV_RUNTIME_EVENT, runtimeEventHandler);
+  });
+
+  it("does not retry reset denials outside the admission retry contract", async () => {
+    vi.useFakeTimers();
+    let resetAttempts = 0;
+    mocked.hostSocket.emit.mockImplementation(
+      (event: string, _payload: unknown, callback?: (ack: unknown) => void) => {
+        if (event === "host:bootstrap") {
+          callback?.({ ok: true });
+          return;
+        }
+        if (event === "host:createRoom") {
+          callback?.({
+            ok: true,
+            roomId: "ROOM1",
+            hostResumeCapability: TEST_HOST_RESUME_CAPABILITY,
+          });
+          return;
+        }
+        if (event === "host:resetRoom") {
+          resetAttempts += 1;
+          callback?.({
+            ok: false,
+            code: "ROOM_FULL",
+            message: "Reset denied",
+            retryAfterSeconds: 1,
+          });
+        }
+      },
+    );
+
+    const { result } = renderHook(() => useAirJamHost(), {
+      wrapper: createHostWrapper(),
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await expect(result.current.resetRoom()).resolves.toMatchObject({
+      ok: false,
+      code: "ROOM_FULL",
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(resetAttempts).toBe(1);
+  });
+
+  it("cancels a pending reset admission retry on unmount", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    let resetAttempts = 0;
+    mocked.hostSocket.emit.mockImplementation(
+      (event: string, _payload: unknown, callback?: (ack: unknown) => void) => {
+        if (event === "host:bootstrap") {
+          callback?.({ ok: true });
+          return;
+        }
+        if (event === "host:createRoom") {
+          callback?.({
+            ok: true,
+            roomId: "ROOM1",
+            hostResumeCapability: TEST_HOST_RESUME_CAPABILITY,
+          });
+          return;
+        }
+        if (event === "host:resetRoom") {
+          resetAttempts += 1;
+          callback?.({
+            ok: false,
+            code: "SERVICE_UNAVAILABLE",
+            message: "Reset admission is busy",
+            retryAfterSeconds: 1,
+          });
+        }
+      },
+    );
+
+    const { result, unmount } = renderHook(() => useAirJamHost(), {
+      wrapper: createHostWrapper(),
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const resetPromise = result.current.resetRoom();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(resetAttempts).toBe(1);
+
+    unmount();
+    await expect(resetPromise).resolves.toMatchObject({
+      ok: false,
+      code: "CONNECTION_FAILED",
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(resetAttempts).toBe(1);
+  });
+
+  it("cancels a pending reset admission retry when the room session changes", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    let resetAttempts = 0;
+    mocked.hostSocket.emit.mockImplementation(
+      (event: string, _payload: unknown, callback?: (ack: unknown) => void) => {
+        if (event === "host:bootstrap") {
+          callback?.({ ok: true });
+          return;
+        }
+        if (event === "host:createRoom") {
+          callback?.({
+            ok: true,
+            roomId: "ROOM1",
+            hostResumeCapability: TEST_HOST_RESUME_CAPABILITY,
+          });
+          return;
+        }
+        if (event === "host:resetRoom") {
+          resetAttempts += 1;
+          callback?.({
+            ok: false,
+            code: "SERVICE_UNAVAILABLE",
+            message: "Reset admission is busy",
+            retryAfterSeconds: 1,
+          });
+        }
+      },
+    );
+
+    const { result } = renderHook(() => useAirJamHost(), {
+      wrapper: createHostWrapper(),
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const resetPromise = result.current.resetRoom();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(resetAttempts).toBe(1);
+
+    let cancelledAck: Awaited<typeof resetPromise> | undefined;
+    await act(async () => {
+      mocked.store?.getState().setRoomId("ROOM2");
+      cancelledAck = await resetPromise;
+    });
+    expect(cancelledAck).toMatchObject({
+      ok: false,
+      code: "CONNECTION_FAILED",
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(resetAttempts).toBe(1);
+  });
+
   it("recovers host status when the cached socket is already connected", async () => {
     mocked.store?.getState().setRoomId("ROOM1");
     mocked.store?.getState().setRegisteredRoomId("ROOM1");
-    sessionStorage.setItem("airjam_room_id", "ROOM1");
+    persistTestHostSession();
     mocked.hostSocket.emit.mockImplementation(
       (event: string, _payload: unknown, callback?: (ack: unknown) => void) => {
         if (event === "host:bootstrap") {
           callback?.({ ok: true });
         }
         if (event === "host:reconnect") {
-          callback?.({ ok: true, roomId: "ROOM1" });
+          callback?.({
+            ok: true,
+            roomId: "ROOM1",
+            hostResumeCapability: TEST_HOST_RESUME_CAPABILITY,
+          });
         }
       },
     );
@@ -452,12 +818,20 @@ describe("session reconnect behavior", () => {
       { appId: undefined, hostSessionKind: "game" },
       expect.any(Function),
     );
+    expect(mocked.hostSocket.emit).toHaveBeenCalledWith(
+      "host:reconnect",
+      {
+        roomId: "ROOM1",
+        resumeCapabilityToken: TEST_HOST_RESUME_CAPABILITY.token,
+      },
+      expect.any(Function),
+    );
   });
 
   it("retains the arcade checkpoint even when reconnecting without an active game", async () => {
     mocked.store?.getState().setRoomId("ROOM1");
     mocked.store?.getState().setRegisteredRoomId("ROOM1");
-    sessionStorage.setItem("airjam_room_id", "ROOM1");
+    persistTestHostSession();
     mocked.hostSocket.emit.mockImplementation(
       (event: string, _payload: unknown, callback?: (ack: unknown) => void) => {
         if (event === "host:bootstrap") {
@@ -489,7 +863,7 @@ describe("session reconnect behavior", () => {
   it("hydrates existing players from the host reconnect ack", async () => {
     mocked.store?.getState().setRoomId("ROOM1");
     mocked.store?.getState().setRegisteredRoomId("ROOM1");
-    sessionStorage.setItem("airjam_room_id", "ROOM1");
+    persistTestHostSession();
     mocked.hostSocket.emit.mockImplementation(
       (event: string, _payload: unknown, callback?: (ack: unknown) => void) => {
         if (event === "host:bootstrap") {
@@ -531,7 +905,7 @@ describe("session reconnect behavior", () => {
   it("blocks direct host state emits when the active room is no longer authoritative", async () => {
     mocked.store?.getState().setRoomId("ROOM1");
     mocked.store?.getState().setRegisteredRoomId("ROOM1");
-    sessionStorage.setItem("airjam_room_id", "ROOM1");
+    persistTestHostSession();
     mocked.hostSocket.emit.mockImplementation(
       (event: string, _payload: unknown, callback?: (ack: unknown) => void) => {
         if (event === "host:bootstrap") {
@@ -582,7 +956,7 @@ describe("session reconnect behavior", () => {
   it("fetches a signed host grant before bootstrap when a grant endpoint is configured", async () => {
     mocked.store?.getState().setRoomId("ROOM1");
     mocked.store?.getState().setRegisteredRoomId("ROOM1");
-    sessionStorage.setItem("airjam_room_id", "ROOM1");
+    persistTestHostSession();
     mocked.useAirJamContext.mockReturnValue({
       config: {
         ...TEST_CONFIG,
@@ -707,7 +1081,11 @@ describe("session reconnect behavior", () => {
           return;
         }
         if (event === "host:createRoom") {
-          callback?.({ ok: true, roomId: "ROOM1" });
+          callback?.({
+            ok: true,
+            roomId: "ROOM1",
+            hostResumeCapability: TEST_HOST_RESUME_CAPABILITY,
+          });
         }
       },
     );
@@ -741,10 +1119,48 @@ describe("session reconnect behavior", () => {
     ).toHaveLength(0);
   });
 
+  it("discards legacy room-only storage instead of attempting an unowned reconnect", async () => {
+    sessionStorage.clear();
+    sessionStorage.setItem("airjam_room_id", "ROOM1");
+    mocked.hostSocket.emit.mockImplementation(
+      (event: string, _payload: unknown, callback?: (ack: unknown) => void) => {
+        if (event === "host:bootstrap") {
+          callback?.({ ok: true });
+          return;
+        }
+        if (event === "host:createRoom") {
+          callback?.({
+            ok: true,
+            roomId: "ROOM2",
+            hostResumeCapability: TEST_HOST_RESUME_CAPABILITY,
+          });
+        }
+      },
+    );
+
+    const { result } = renderHook(() => useAirJamHost(), {
+      wrapper: createHostWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.roomId).toBe("ROOM2");
+      expect(result.current.connectionStatus).toBe("connected");
+    });
+    expect(
+      mocked.hostSocket.emit.mock.calls.filter(
+        ([event]) => event === "host:reconnect",
+      ),
+    ).toHaveLength(0);
+    expect(sessionStorage.getItem("airjam_room_id")).toBe("ROOM2");
+    expect(sessionStorage.getItem("airjam_host_resume_capability")).toBe(
+      TEST_HOST_RESUME_CAPABILITY.token,
+    );
+  });
+
   it("clears room authority before reconnect fallback creates a replacement room", async () => {
     mocked.store?.getState().setRoomId("ROOM1");
     mocked.store?.getState().setRegisteredRoomId("ROOM1");
-    sessionStorage.setItem("airjam_room_id", "ROOM1");
+    persistTestHostSession();
 
     mocked.hostSocket.emit.mockImplementation(
       (event: string, payload: unknown, callback?: (ack: unknown) => void) => {
@@ -765,7 +1181,11 @@ describe("session reconnect behavior", () => {
           expect(payload).toMatchObject({
             maxPlayers: 8,
           });
-          callback?.({ ok: true, roomId: "ROOM2" });
+          callback?.({
+            ok: true,
+            roomId: "ROOM2",
+            hostResumeCapability: { token: "replacement-resume-token" },
+          });
         }
       },
     );
@@ -781,6 +1201,9 @@ describe("session reconnect behavior", () => {
 
     expect(mocked.store?.getState().registeredRoomId).toBe("ROOM2");
     expect(sessionStorage.getItem("airjam_room_id")).toBe("ROOM2");
+    expect(sessionStorage.getItem("airjam_host_resume_capability")).toBe(
+      "replacement-resume-token",
+    );
   });
 
   it("prefers the injected arcade join url in child-host mode", async () => {

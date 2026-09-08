@@ -1,12 +1,21 @@
-import { normalizeUnknownOperationalFailure } from "@air-jam/operations-contract";
+import {
+  normalizeUnknownOperationalFailure,
+  resolveDeploymentEnvironment,
+  type DeploymentEnvironment,
+} from "@air-jam/operations-contract";
 import {
   AIRJAM_DEV_LOG_EVENTS,
   verifyHostGrant,
   type HostGrantClaims,
 } from "@air-jam/sdk/protocol";
-import { and, eq } from "drizzle-orm";
-import { appIds, type ServerDatabase } from "../db.js";
+import { and, eq, sql } from "drizzle-orm";
+import {
+  appIds,
+  realtimeHostGrantConsumptions,
+  type ServerDatabase,
+} from "../db.js";
 import { resolveServerRuntimeDatabaseUrl } from "../env/database-url-policy.js";
+import { isLocalMasterKeyAllowed } from "../env/server-env.js";
 import { createServerLogger, type ServerLogger } from "../logging/logger.js";
 import {
   publishServerOperationalFailureSafely,
@@ -33,6 +42,7 @@ export interface VerifyHostBootstrapInput {
   appId?: string;
   hostGrant?: string;
   origin?: string;
+  hostSessionKind?: "game" | "system";
 }
 
 export interface HostBootstrapVerificationResult extends VerificationResult {
@@ -55,6 +65,7 @@ export interface AuthServiceEnvironment {
   hostGrantSecret?: string;
   databaseUrl?: string;
   nodeEnv?: string;
+  operationalEnvironment?: DeploymentEnvironment;
 }
 
 export interface AuthServiceOptions {
@@ -117,6 +128,8 @@ export class AuthService {
   private hostGrantSecret: string | undefined;
   private databaseUrl: string | undefined;
   private authMode: AuthMode;
+  private nodeEnv: string;
+  private operationalEnvironment: DeploymentEnvironment;
   private db: ServerDatabase | null;
   private operationalEventPublisher: ServerOperationalEventPublisher | null;
 
@@ -129,6 +142,14 @@ export class AuthService {
       options.env?.databaseUrl ??
       resolveServerRuntimeDatabaseUrl(process.env).databaseUrl;
     this.authMode = this.resolveAuthMode(options.env);
+    this.nodeEnv =
+      options.env?.nodeEnv ?? process.env.NODE_ENV ?? "development";
+    this.operationalEnvironment =
+      options.env?.operationalEnvironment ??
+      resolveDeploymentEnvironment({
+        ...process.env,
+        ...(options.env?.nodeEnv ? { NODE_ENV: options.env.nodeEnv } : {}),
+      });
     this.db = options.db ?? null;
     this.operationalEventPublisher = options.operationalEventPublisher ?? null;
 
@@ -137,10 +158,14 @@ export class AuthService {
         { event: AIRJAM_DEV_LOG_EVENTS.auth.modeDisabled },
         "Authentication disabled (set AIR_JAM_AUTH_MODE=required to enforce app identity checks)",
       );
-    } else if (this.masterKey && !this.databaseUrl && !this.hostGrantSecret) {
+    } else if (
+      this.canUseLocalMasterKey() &&
+      !this.databaseUrl &&
+      !this.hostGrantSecret
+    ) {
       this.logger.info(
         { event: AIRJAM_DEV_LOG_EVENTS.auth.modeMasterKey },
-        "Running with master key authentication (no database required)",
+        "Running with local-development master key authentication",
       );
     } else if (this.databaseUrl && this.hostGrantSecret) {
       this.logger.info(
@@ -153,14 +178,14 @@ export class AuthService {
         "Running with database authentication",
       );
     } else if (this.hostGrantSecret) {
-      this.logger.info(
-        { event: AIRJAM_DEV_LOG_EVENTS.auth.modeHostGrantOnly },
-        "Running with signed host-grant authentication only (app ID bootstrap disabled because DATABASE_URL is not configured)",
+      this.logger.warn(
+        { event: AIRJAM_DEV_LOG_EVENTS.auth.backendMissing },
+        "Signed host grants are configured without PostgreSQL consumption authority",
       );
     } else {
       this.logger.warn(
         { event: AIRJAM_DEV_LOG_EVENTS.auth.backendMissing },
-        "Authentication required, but no auth backend is configured (set AIR_JAM_MASTER_KEY or DATABASE_URL)",
+        "Authentication required, but no auth backend is configured (set DATABASE_URL)",
       );
     }
   }
@@ -170,13 +195,17 @@ export class AuthService {
       return null;
     }
 
-    if (this.masterKey || this.databaseUrl || this.hostGrantSecret) {
+    if (this.hostGrantSecret && !this.db && !this.canUseLocalMasterKey()) {
+      return "Signed host grants require PostgreSQL consumption authority.";
+    }
+
+    if (this.db || this.canUseLocalMasterKey()) {
       return null;
     }
 
     return [
       "AIR_JAM_AUTH_MODE=required requires an auth backend.",
-      "Configure DATABASE_URL for app ID bootstrap, AIR_JAM_HOST_GRANT_SECRET for signed host grants, or AIR_JAM_MASTER_KEY for the legacy fallback.",
+      "Configure DATABASE_URL for app ID bootstrap and signed host grants.",
     ].join(" ");
   }
 
@@ -184,6 +213,7 @@ export class AuthService {
     appId,
     hostGrant,
     origin,
+    hostSessionKind,
   }: VerifyHostBootstrapInput): Promise<HostBootstrapVerificationResult> {
     const normalizedOrigin = normalizeOrigin(origin) ?? undefined;
 
@@ -206,8 +236,24 @@ export class AuthService {
           error: grantResult.error ?? "Unauthorized: Invalid Host Grant",
         };
       }
+      const grantClaims = grantResult.claims;
 
-      const grantOrigins = (grantResult.claims.origins ?? [])
+      const requestedHostSessionKind = hostSessionKind ?? "system";
+      const expectedIntent =
+        requestedHostSessionKind === "system"
+          ? "system_register"
+          : "create_room";
+      if (
+        grantClaims.sessionKind !== requestedHostSessionKind ||
+        grantClaims.intent !== expectedIntent
+      ) {
+        return {
+          isVerified: false,
+          error: "Unauthorized: Host grant session intent mismatch",
+        };
+      }
+
+      const grantOrigins = grantClaims.origins
         .map((value) => normalizeOrigin(value))
         .filter((value): value is string => value !== null);
 
@@ -227,18 +273,91 @@ export class AuthService {
         }
       }
 
-      const keyRecord = await resolveActiveAppIdRecord({
-        appId: grantResult.claims.appId,
-        db: this.db,
-      });
+      if (!this.db) {
+        return {
+          isVerified: false,
+          error: "Unauthorized: Host grant consumption is unavailable",
+        };
+      }
+
+      try {
+        const consumption = await this.db.transaction(async (transaction) => {
+          const [activeIdentity] = await transaction
+            .select({
+              gameId: appIds.gameId,
+              creatorId: appIds.creatorId,
+            })
+            .from(appIds)
+            .where(
+              and(eq(appIds.key, grantClaims.appId), eq(appIds.isActive, true)),
+            )
+            .limit(1);
+          if (
+            !activeIdentity ||
+            activeIdentity.gameId !== grantClaims.gameId ||
+            activeIdentity.creatorId !== grantClaims.creatorId
+          ) {
+            return { status: "invalid_identity" as const };
+          }
+
+          await transaction.execute(sql`
+            delete from ${realtimeHostGrantConsumptions}
+            where ${realtimeHostGrantConsumptions.jti} in (
+              select ${realtimeHostGrantConsumptions.jti}
+              from ${realtimeHostGrantConsumptions}
+              where ${realtimeHostGrantConsumptions.expiresAt} <= clock_timestamp()
+              order by ${realtimeHostGrantConsumptions.expiresAt} asc
+              limit 256
+              for update skip locked
+            )
+          `);
+          const inserted = await transaction
+            .insert(realtimeHostGrantConsumptions)
+            .values({
+              jti: grantClaims.jti,
+              appId: grantClaims.appId,
+              abuseSessionId: grantClaims.abuseSessionId,
+              sessionKind: grantClaims.sessionKind,
+              intent: grantClaims.intent,
+              expiresAt: new Date(grantClaims.exp * 1_000),
+            })
+            .onConflictDoNothing()
+            .returning({ jti: realtimeHostGrantConsumptions.jti });
+          return {
+            status:
+              inserted.length === 1
+                ? ("consumed" as const)
+                : ("already_consumed" as const),
+          };
+        });
+        if (consumption.status === "invalid_identity") {
+          return {
+            isVerified: false,
+            error: "Unauthorized: Host grant identity is not active",
+          };
+        }
+        if (consumption.status === "already_consumed") {
+          return {
+            isVerified: false,
+            error: "Unauthorized: Host grant was already consumed",
+          };
+        }
+      } catch (error) {
+        this.logger.error({ err: error }, "Host grant consumption failed");
+        return {
+          isVerified: false,
+          error: "Unauthorized: Host grant consumption is unavailable",
+        };
+      }
+
       return {
         isVerified: true,
-        appId: grantResult.claims.appId,
-        gameId: keyRecord?.gameId,
-        creatorId: keyRecord?.creatorId ?? undefined,
+        appId: grantClaims.appId,
+        gameId: grantClaims.gameId,
+        creatorId: grantClaims.creatorId,
         verifiedVia: "hostGrant",
         verifiedOrigin: normalizedOrigin,
-        grantClaims: grantResult.claims,
+        grantClaims,
       };
     }
 
@@ -274,8 +393,9 @@ export class AuthService {
       };
     }
 
-    // Check master key first
-    if (this.masterKey && appId === this.masterKey) {
+    // The shared key is an explicitly local-only development convenience. It
+    // is never a hosted identity because it carries no game or creator scope.
+    if (this.canUseLocalMasterKey() && appId === this.masterKey) {
       return { isVerified: true };
     }
 
@@ -406,5 +526,15 @@ export class AuthService {
     }
 
     return "disabled";
+  }
+
+  private canUseLocalMasterKey(): boolean {
+    return (
+      Boolean(this.masterKey) &&
+      isLocalMasterKeyAllowed({
+        nodeEnv: this.nodeEnv,
+        operationalEnvironment: this.operationalEnvironment,
+      })
+    );
   }
 }

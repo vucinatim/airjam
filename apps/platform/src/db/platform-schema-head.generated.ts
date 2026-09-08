@@ -4,9 +4,9 @@
 export const PLATFORM_SCHEMA_CONTRACT_VERSION = 1 as const;
 
 export const platformSchemaHead = {
-  tag: "0039_realtime_admission_contract",
-  createdAt: 1788835643710,
-  hash: "30a3020f1bd73483145cca591e4dfd7c06d42b1b86eb03e79f28eef6c776e22d",
+  tag: "0040_host_grant_consumption",
+  createdAt: 1788835707497,
+  hash: "446fefda29ca3caeaadef856efb67cf1a501229fec64776137366df79dfa49ba",
   catalogDigest:
-    "1857f4746a6ce83165ee391dd84c5d854a52a913882c18f4e29292fcd8071a09",
+    "a17d9ccdc77cfccd42d4d9137d0f01a5c1f6e328277b41c60707290b6579b2a5",
 } as const;
