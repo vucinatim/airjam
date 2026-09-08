@@ -48,8 +48,10 @@ import {
 } from "../../../scripts/platform/lib/platform-migration-catalog.mjs";
 import {
   inspectPlatformMigrationDeploymentProvenance,
-  matchesPlatformMigrationProductionAuthority,
+  matchesPlatformMigrationApplicationDeploymentAuthority,
+  matchesPlatformMigrationProductionOrigin,
 } from "../../../scripts/platform/lib/platform-migration-deployment-provenance.mjs";
+import { resolveRailwayMigrationDeploymentAuthority } from "../../../scripts/repo/lib/railway-deployment-authority.mjs";
 import {
   createPlatformDatabaseDump,
   platformBackupContractVersion,
@@ -81,7 +83,7 @@ type Operation = {
   reason?: string;
   idempotencyKey?: string;
   platformUrl?: string;
-  deployedRevision?: string;
+  deploymentId?: string;
   apply?: boolean;
   drainTimeoutSeconds?: number;
 };
@@ -897,30 +899,52 @@ const verifyPlanWithLockHeld = async ({
   const platformUrl = operation.platformUrl
     ? parsePlatformOrigin(operation.platformUrl)
     : null;
-  const deployedRevision = operation.deployedRevision?.trim() ?? null;
+  const deploymentId = operation.deploymentId?.trim() ?? null;
   let deployment: Record<string, unknown> | null = null;
-  if (Boolean(platformUrl) !== Boolean(deployedRevision)) {
+  if (Boolean(platformUrl) !== Boolean(deploymentId)) {
     throw new Error(
-      "--platform-url and --deployed-revision must be provided together.",
+      "--platform-url and --deployment-id must be provided together.",
     );
   }
   if (plan.authority === "production" && !platformUrl) {
     throw new Error(
-      "Production verification requires --platform-url and --deployed-revision.",
+      "Production verification requires --platform-url and --deployment-id.",
     );
   }
+  let providerAuthority: Awaited<
+    ReturnType<typeof resolveRailwayMigrationDeploymentAuthority>
+  > | null = null;
   let provenance: ReturnType<
     typeof inspectPlatformMigrationDeploymentProvenance
   > | null = null;
-  if (deployedRevision) {
-    provenance = inspectPlatformMigrationDeploymentProvenance({
-      repoRoot,
-      sourceCommit: plan.source.commit,
-      deployedCommit: deployedRevision,
+  let provenanceError: string | null = null;
+  if (deploymentId) {
+    providerAuthority = await resolveRailwayMigrationDeploymentAuthority({
+      databaseTarget: plan.target.target,
+      deploymentId,
+    });
+    if (providerAuthority.status === "verified" && providerAuthority.revision) {
+      try {
+        provenance = inspectPlatformMigrationDeploymentProvenance({
+          repoRoot,
+          sourceCommit: plan.source.commit,
+          deployedCommit: providerAuthority.revision,
+        });
+      } catch (error) {
+        provenanceError =
+          error instanceof Error ? error.message : String(error);
+      }
+    }
+    checks.push({
+      check: "deployment:provider-current-exact-revision",
+      passed: providerAuthority.status === "verified",
     });
     checks.push({
       check: "deployment:reviewed-source-tree",
-      passed: provenance.sourceIsAncestor && provenance.treesMatch,
+      passed:
+        provenance !== null &&
+        provenance.sourceIsAncestor &&
+        provenance.treesMatch,
     });
   }
   if (platformUrl) {
@@ -944,20 +968,21 @@ const verifyPlanWithLockHeld = async ({
       if (plan.authority === "production") {
         checks.push({
           check: "deployment:production-origin-authority",
-          passed: matchesPlatformMigrationProductionAuthority({
+          passed: matchesPlatformMigrationProductionOrigin({
             platformOrigin: platformUrl,
             requestPolicy: readiness.requestPolicy,
-            deployment: readiness.deployment,
-            databaseTarget: plan.target.target,
           }),
         });
       }
       checks.push({
-        check: "deployment:exact-revision-readiness",
+        check: "deployment:application-identity",
         passed:
           response.ok &&
           readiness.readiness.ok &&
-          readiness.deployment.revision === provenance.deployedCommit,
+          matchesPlatformMigrationApplicationDeploymentAuthority({
+            applicationDeployment: readiness.deployment,
+            providerAuthority,
+          }),
       });
     } catch (error) {
       deployment = {
@@ -965,7 +990,7 @@ const verifyPlanWithLockHeld = async ({
         error: error instanceof Error ? error.message : String(error),
       };
       checks.push({
-        check: "deployment:exact-revision-readiness",
+        check: "deployment:application-identity",
         passed: false,
       });
     }
@@ -978,7 +1003,9 @@ const verifyPlanWithLockHeld = async ({
     inspection,
     checks,
     deployment,
+    providerAuthority,
     provenance,
+    provenanceError,
   };
   if (!passed) {
     await markPlatformSchemaMigrationVerificationFailed({

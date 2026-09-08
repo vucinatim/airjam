@@ -8,8 +8,10 @@ import { fileURLToPath } from "node:url";
 import { readPlatformMigrationCatalog } from "../../platform/lib/platform-migration-catalog.mjs";
 import {
   inspectPlatformMigrationDeploymentProvenance,
-  matchesPlatformMigrationProductionAuthority,
+  matchesPlatformMigrationApplicationDeploymentAuthority,
+  matchesPlatformMigrationProductionOrigin,
 } from "../../platform/lib/platform-migration-deployment-provenance.mjs";
+import { resolveRailwayMigrationDeploymentAuthority } from "../lib/railway-deployment-authority.mjs";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -65,7 +67,167 @@ test("platform migration CLI exposes one inspect-plan-apply-verify lifecycle", (
     ],
     { cwd: repoRoot, encoding: "utf8" },
   );
-  assert.match(verifyHelp, /--deployed-revision/u);
+  assert.match(verifyHelp, /--deployment-id/u);
+  assert.doesNotMatch(verifyHelp, /--deployed-revision/u);
+});
+
+test("production migration deployment authority composes provider and application identity", async () => {
+  const databaseTarget = {
+    kind: "railway",
+    projectId: "project-production",
+    environmentId: "environment-production",
+    environmentName: "production",
+  };
+  const deployment = {
+    id: "deployment-current",
+    status: "SUCCESS",
+    serviceId: "service-platform",
+    environmentId: "environment-production",
+    meta: { commitHash: "a".repeat(40) },
+  };
+  const environment = {
+    id: "environment-production",
+    name: "production",
+    projectId: "project-production",
+    serviceInstances: [
+      {
+        serviceId: "service-platform",
+        latestDeployment: {
+          id: "deployment-current",
+          meta: { commitHash: "a".repeat(40) },
+        },
+      },
+    ],
+  };
+  const providerAuthority = await resolveRailwayMigrationDeploymentAuthority(
+    { databaseTarget, deploymentId: "deployment-current" },
+    {
+      client: {
+        getDeployment: async () => deployment,
+        getEnvironment: async () => environment,
+      },
+    },
+  );
+  assert.equal(providerAuthority.status, "verified");
+  assert.equal(providerAuthority.revision, "a".repeat(40));
+  assert.equal(
+    matchesPlatformMigrationApplicationDeploymentAuthority({
+      providerAuthority,
+      applicationDeployment: {
+        provider: "railway",
+        environment: "production",
+        deploymentId: "deployment-current",
+        revision: null,
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    matchesPlatformMigrationApplicationDeploymentAuthority({
+      providerAuthority,
+      applicationDeployment: {
+        provider: "railway",
+        environment: "production",
+        deploymentId: "deployment-current",
+        revision: "a".repeat(40),
+      },
+    }),
+    true,
+  );
+
+  for (const applicationDeployment of [
+    {
+      provider: "railway",
+      environment: "production",
+      deploymentId: "deployment-other",
+      revision: null,
+    },
+    {
+      provider: "railway",
+      environment: "production",
+      deploymentId: "deployment-current",
+      revision: "b".repeat(40),
+    },
+  ]) {
+    assert.equal(
+      matchesPlatformMigrationApplicationDeploymentAuthority({
+        providerAuthority,
+        applicationDeployment,
+      }),
+      false,
+    );
+  }
+
+  const staleProvider = await resolveRailwayMigrationDeploymentAuthority(
+    { databaseTarget, deploymentId: "deployment-current" },
+    {
+      client: {
+        getDeployment: async () => deployment,
+        getEnvironment: async () => ({
+          ...environment,
+          serviceInstances: [
+            {
+              serviceId: "service-platform",
+              latestDeployment: {
+                id: "deployment-newer",
+                meta: { commitHash: "b".repeat(40) },
+              },
+            },
+          ],
+        }),
+      },
+    },
+  );
+  assert.equal(staleProvider.status, "mismatch");
+  assert.equal(
+    matchesPlatformMigrationApplicationDeploymentAuthority({
+      providerAuthority: staleProvider,
+      applicationDeployment: {
+        provider: "railway",
+        environment: "production",
+        deploymentId: "deployment-current",
+        revision: null,
+      },
+    }),
+    false,
+  );
+
+  for (const override of [
+    {
+      deployment: { ...deployment, status: "FAILED" },
+      environment,
+    },
+    {
+      deployment: {
+        ...deployment,
+        environmentId: "environment-other",
+      },
+      environment,
+    },
+    {
+      deployment: { ...deployment, meta: {} },
+      environment,
+    },
+    {
+      deployment,
+      environment: { ...environment, projectId: "project-other" },
+    },
+  ]) {
+    assert.equal(
+      (
+        await resolveRailwayMigrationDeploymentAuthority(
+          { databaseTarget, deploymentId: "deployment-current" },
+          {
+            client: {
+              getDeployment: async () => override.deployment,
+              getEnvironment: async () => override.environment,
+            },
+          },
+        )
+      ).status,
+      "mismatch",
+    );
+  }
 });
 
 test("deployment provenance accepts an exact reviewed tree wrapped by a merge commit", () => {
@@ -141,19 +303,17 @@ test("deployment provenance accepts an exact reviewed tree wrapped by a merge co
   );
 });
 
-test("production migration authority rejects preview and mismatched environments", () => {
+test("production migration origin authority rejects preview and mismatched origins", () => {
   const base = {
     platformOrigin: "https://airjam.io",
     requestPolicy: {
       platformPublicOrigin: "https://airjam.io",
       isRailwayPreviewEnvironment: false,
     },
-    deployment: { provider: "railway", environment: "production" },
-    databaseTarget: { kind: "railway", environmentName: "production" },
   };
-  assert.equal(matchesPlatformMigrationProductionAuthority(base), true);
+  assert.equal(matchesPlatformMigrationProductionOrigin(base), true);
   assert.equal(
-    matchesPlatformMigrationProductionAuthority({
+    matchesPlatformMigrationProductionOrigin({
       ...base,
       requestPolicy: {
         ...base.requestPolicy,
@@ -163,14 +323,7 @@ test("production migration authority rejects preview and mismatched environments
     false,
   );
   assert.equal(
-    matchesPlatformMigrationProductionAuthority({
-      ...base,
-      deployment: { ...base.deployment, environment: "air-jam-pr-107" },
-    }),
-    false,
-  );
-  assert.equal(
-    matchesPlatformMigrationProductionAuthority({
+    matchesPlatformMigrationProductionOrigin({
       ...base,
       platformOrigin: "https://preview.example",
     }),

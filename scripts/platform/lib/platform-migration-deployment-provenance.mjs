@@ -71,13 +71,20 @@ export const inspectPlatformMigrationDeploymentProvenance = ({
   };
 };
 
-export const matchesPlatformMigrationProductionAuthority = ({
+export const matchesPlatformMigrationProductionOrigin = ({
   platformOrigin,
   requestPolicy,
-  deployment,
-  databaseTarget,
 }) =>
   requestPolicy.platformPublicOrigin === platformOrigin &&
-  !requestPolicy.isRailwayPreviewEnvironment &&
-  deployment.environment === databaseTarget.environmentName &&
-  (databaseTarget.kind !== "railway" || deployment.provider === "railway");
+  !requestPolicy.isRailwayPreviewEnvironment;
+
+export const matchesPlatformMigrationApplicationDeploymentAuthority = ({
+  applicationDeployment,
+  providerAuthority,
+}) =>
+  providerAuthority?.status === "verified" &&
+  applicationDeployment.provider === providerAuthority.provider &&
+  applicationDeployment.environment === providerAuthority.environmentName &&
+  applicationDeployment.deploymentId === providerAuthority.deploymentId &&
+  (applicationDeployment.revision === null ||
+    applicationDeployment.revision === providerAuthority.revision);
