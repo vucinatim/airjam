@@ -39,6 +39,7 @@ import {
   createUnavailableRealtimeAdmissionService,
   DatabaseRealtimeAdmissionService,
   type RealtimeAdmissionService,
+  type RealtimeAdmissionStatus,
   type RealtimeAdmissionTerminalFailure,
 } from "./services/realtime-admission-service.js";
 import { RoomManager } from "./services/room-manager.js";
@@ -49,6 +50,19 @@ export type AirJamIoServer = Server<
   InterServerEvents,
   SocketData
 >;
+
+const projectPublicRealtimeAdmissionStatus = (
+  status: RealtimeAdmissionStatus,
+) => ({
+  contractVersion: status.contractVersion,
+  authority: status.authority,
+  acceptingNewWork: status.acceptingNewWork,
+  draining: status.draining,
+  terminalAuthorityLost: status.terminalAuthorityLost,
+  pendingReconciliations: status.pendingReconciliations,
+  lastHeartbeatAt: status.lastHeartbeatAt,
+  hasError: status.lastError !== null,
+});
 
 export interface CreateAirJamServerOptions {
   port?: number;
@@ -227,7 +241,9 @@ export const createAirJamServer = (
     for (const session of rooms.values()) {
       controllerCount += session.controllers.size;
     }
-    const realtimeAdmission = realtimeAdmissionService.getStatus();
+    const realtimeAdmission = projectPublicRealtimeAdmissionStatus(
+      realtimeAdmissionService.getStatus(),
+    );
     res.json({
       ok: true,
       uptime: Math.floor(process.uptime()),
@@ -239,7 +255,9 @@ export const createAirJamServer = (
   });
 
   app.get("/ready", (_, res) => {
-    const realtimeAdmission = realtimeAdmissionService.getStatus();
+    const realtimeAdmission = projectPublicRealtimeAdmissionStatus(
+      realtimeAdmissionService.getStatus(),
+    );
     const ok = !envConfig.maintenanceMode && realtimeAdmission.acceptingNewWork;
     res.status(ok ? 200 : 503).json({
       ok,

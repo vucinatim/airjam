@@ -75,6 +75,10 @@ export const registerControllerHandlers = (
   let lastServerInputFailLogTime = 0;
   let controllerAdmissionPending = false;
   let controllerLifecycleEpoch = 0;
+  let lastAcceptedLeave: Pick<
+    ControllerLeavePayload,
+    "roomId" | "controllerId"
+  > | null = null;
   const controllerInputSummary = createWindowedEventSummary({
     logger,
     event: AIRJAM_DEV_LOG_EVENTS.controller.inputSummary,
@@ -490,6 +494,7 @@ export const registerControllerHandlers = (
         joinedAt: Date.now(),
         privilegedGrants: grantedPrivileges,
       };
+      lastAcceptedLeave = null;
       socket.join(roomId);
 
       emitControllerJoinedNotice(io, session, controllerSession, { resumed });
@@ -690,7 +695,14 @@ export const registerControllerHandlers = (
       }
 
       const { roomId, controllerId } = parsed.data;
-      if (!isControllerAuthorizedForRoom(roomId, controllerId)) {
+      const repeatsAcceptedLeave =
+        !socket.data.controllerAuthority &&
+        lastAcceptedLeave?.roomId === roomId &&
+        lastAcceptedLeave.controllerId === controllerId;
+      if (
+        !repeatsAcceptedLeave &&
+        !isControllerAuthorizedForRoom(roomId, controllerId)
+      ) {
         logControllerEvent(
           "warn",
           AIRJAM_DEV_LOG_EVENTS.controller.leaveRejected,
@@ -711,64 +723,64 @@ export const registerControllerHandlers = (
 
       const session = roomManager.getRoom(roomId);
       if (!session) {
+        roomManager.deleteController(socket.id);
+        delete socket.data.controllerAuthority;
+        lastAcceptedLeave = { roomId, controllerId };
+        socket.leave(roomId);
         logControllerEvent(
-          "warn",
-          AIRJAM_DEV_LOG_EVENTS.controller.leaveRejected,
-          "Rejected controller leave because room was not found",
+          "info",
+          AIRJAM_DEV_LOG_EVENTS.controller.leaveAccepted,
+          "Controller leave was already complete",
           {
             roomId,
             controllerId,
-            reason: "room_not_found",
+            alreadyAbsent: true,
           },
         );
-        callback({
-          ok: false,
-          message: "Room not found",
-          code: ErrorCode.ROOM_NOT_FOUND,
-        });
+        callback({ ok: true });
         return;
       }
 
       const controllerSession = session.controllers.get(controllerId);
-      if (!controllerSession) {
-        callback({
-          ok: false,
-          message: "Controller not found",
-          code: ErrorCode.ROOM_NOT_FOUND,
-        });
-        return;
-      }
       if (controllerSession?.pendingDisconnectTimer) {
         clearTimeout(controllerSession.pendingDisconnectTimer);
         controllerSession.pendingDisconnectTimer = undefined;
       }
-      controllerLifecycleEpoch += 1;
-      controllerSession.retiredAt = Date.now();
-      session.controllers.delete(controllerId);
+      if (controllerSession) {
+        controllerLifecycleEpoch += 1;
+        controllerSession.retiredAt = Date.now();
+        session.controllers.delete(controllerId);
+      }
       roomManager.deleteController(socket.id);
       delete socket.data.controllerAuthority;
-      emitControllerLeftNotice(io, session, controllerId);
+      lastAcceptedLeave = { roomId, controllerId };
       socket.leave(roomId);
       logControllerEvent(
         "info",
         AIRJAM_DEV_LOG_EVENTS.controller.leaveAccepted,
-        "Controller left room",
+        controllerSession
+          ? "Controller left room"
+          : "Controller leave was already complete",
         {
           roomId,
           controllerId,
+          alreadyAbsent: !controllerSession,
         },
       );
-      runtimeUsagePublisher.publish(
-        createRoomRuntimeUsageEvent(session, {
-          kind: "controller_left",
-          payload: {
-            controllerId,
-          },
-        }),
-      );
-      await realtimeAdmissionService.releaseController(
-        controllerSession.admissionLease,
-      );
+      if (controllerSession) {
+        emitControllerLeftNotice(io, session, controllerId);
+        runtimeUsagePublisher.publish(
+          createRoomRuntimeUsageEvent(session, {
+            kind: "controller_left",
+            payload: {
+              controllerId,
+            },
+          }),
+        );
+        await realtimeAdmissionService.releaseController(
+          controllerSession.admissionLease,
+        );
+      }
       callback({ ok: true });
     },
   );

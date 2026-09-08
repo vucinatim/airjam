@@ -147,6 +147,15 @@ describe("server room lifecycle", () => {
     );
     const leftNotice = await leftNoticePromise;
     expect(leftNotice.controllerId).toBe("ctrl_rejoin_1");
+    await expect(
+      harness.emitWithAck<{ ok: boolean }>(controllerA, "controller:leave", {
+        roomId,
+        controllerId: "ctrl_rejoin_1",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(harness.getRoomManager().getControllerInfo(controllerA.id!)).toBe(
+      undefined,
+    );
 
     const controllerB = await harness.connectSocket();
     const rejoinedNoticePromise = harness.waitForEvent<{

@@ -113,13 +113,26 @@ describe("server health, readiness, and terminal authority lifecycle", () => {
     const unavailableHealth = await fetch(`${baseUrl}/health`);
     const unavailableReady = await fetch(`${baseUrl}/ready`);
     expect(unavailableHealth.status).toBe(200);
-    await expect(unavailableHealth.json()).resolves.toMatchObject({
+    const unavailableHealthBody = (await unavailableHealth.json()) as {
+      realtimeAdmission: Record<string, unknown>;
+    };
+    expect(unavailableHealthBody).toMatchObject({
       ok: true,
       realtimeAdmission: {
         authority: "unavailable",
         acceptingNewWork: false,
+        hasError: true,
       },
     });
+    expect(unavailableHealthBody.realtimeAdmission).not.toHaveProperty(
+      "lastError",
+    );
+    expect(unavailableHealthBody.realtimeAdmission).not.toHaveProperty(
+      "instanceId",
+    );
+    expect(unavailableHealthBody.realtimeAdmission).not.toHaveProperty(
+      "policy",
+    );
     expect(unavailableReady.status).toBe(503);
     await expect(unavailableReady.json()).resolves.toMatchObject({ ok: false });
 

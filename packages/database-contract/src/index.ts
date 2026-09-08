@@ -337,6 +337,11 @@ export const decideOperationalAdmissionPolicy = ({
       "Projected quota usage exceeds the safe integer range.",
     );
   }
+  const quotaEnforced =
+    control?.mode === "restricted" ||
+    budget.state === "protection" ||
+    budget.state === "near_ceiling" ||
+    budget.state === "ceiling";
   const denied = (
     reason: Exclude<OperationalAdmissionPolicyReason, null>,
     retryAfterSeconds: number | null = null,
@@ -344,7 +349,7 @@ export const decideOperationalAdmissionPolicy = ({
     outcome: "denied",
     reason,
     retryAfterSeconds,
-    quotaEnforced: false,
+    quotaEnforced,
     projectedUsage,
   });
 
@@ -358,11 +363,6 @@ export const decideOperationalAdmissionPolicy = ({
   if (operationalBudgetBlockedLanes[budget.state].has(lane)) {
     return denied("budget_protection");
   }
-  const quotaEnforced =
-    control.mode === "restricted" ||
-    budget.state === "protection" ||
-    budget.state === "near_ceiling" ||
-    budget.state === "ceiling";
   if (quota && (!quota.authorityAvailable || quota.current === null)) {
     return denied("control_unavailable", 30);
   }

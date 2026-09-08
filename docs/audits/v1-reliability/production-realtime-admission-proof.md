@@ -108,9 +108,19 @@ The failure policy protects active play and cost at the same time:
    admission once no live successor remains
 
 The realtime `/health` projection remains a process-liveness response and
-includes admission authority, accepting-work, drain, heartbeat, error, and
-policy state. `/ready` is the traffic-readiness boundary and returns `503` when
-hosted admission authority is unavailable or the instance is draining.
+includes only bounded admission authority, accepting-work, drain, heartbeat,
+pending-reconciliation, terminal-loss, and `hasError` state. It deliberately
+does not expose raw error messages, instance identity, or policy internals.
+`/ready` is the traffic-readiness boundary and returns `503` when hosted
+admission authority is unavailable or the instance is draining.
+
+The 1.0 deployment contract remains exactly one realtime replica. PostgreSQL
+provides shared admission and lease authority, but gameplay and room placement
+remain process-local. Instance registration therefore permits only one
+accepting replica and drains an incumbent during replacement; it is a safe
+deployment handoff, not a multi-replica room-routing design. The configured and
+tested capacity envelope is consequently a one-replica envelope until a future
+room-placement authority is designed and proven.
 
 ## Agent-Operable Inspection
 
@@ -158,8 +168,8 @@ Current focused evidence covers:
    composite game/creator ownership foreign key, and PostgreSQL rejection of
    invalid ownership pairs
 9. exact global-controller boundaries, creator/game shadow versus restricted
-    enforcement, budget protection and ceiling states, missing/stale evidence,
-    and resume behavior during pause, drain, and dependency loss
+   enforcement, budget protection and ceiling states, missing/stale evidence,
+   and resume behavior during pause, drain, and dependency loss
 10. deterministic socket races where room teardown, controller leave, resume
     expiry, or disconnect wins while admission is pending, including immediate
     local authority revocation before a slow durable release completes

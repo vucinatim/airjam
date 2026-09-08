@@ -91,6 +91,7 @@ const resolveActiveAppIdRecord = async ({
     .select({
       id: appIds.id,
       gameId: appIds.gameId,
+      creatorId: appIds.creatorId,
       key: appIds.key,
       allowedOrigins: appIds.allowedOrigins,
       isActive: appIds.isActive,

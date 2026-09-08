@@ -792,8 +792,7 @@ export class DatabaseRealtimeAdmissionService implements RealtimeAdmissionServic
           );
         }
 
-        const currentIsActive = current?.active === true;
-        if (currentIsActive && existingLease) {
+        if (current && existingLease) {
           const resumed = await transaction
             .update(realtimeControllerAdmissionLeases)
             .set({
@@ -943,38 +942,12 @@ export class DatabaseRealtimeAdmissionService implements RealtimeAdmissionServic
             );
         }
 
-        if (current && existingLease) {
-          const resumed = await transaction
-            .update(realtimeControllerAdmissionLeases)
-            .set({
-              leaseToken: lease.leaseToken,
-              disconnectedAt: null,
-              resumeExpiresAt: null,
-            })
-            .where(
-              eq(
-                realtimeControllerAdmissionLeases.leaseToken,
-                existingLease.leaseToken,
-              ),
-            )
-            .returning({
-              controllerId: realtimeControllerAdmissionLeases.controllerId,
-            });
-          if (resumed.length !== 1) {
-            return denial(
-              "controller_conflict",
-              "Controller slot is unavailable.",
-              null,
-            );
-          }
-        } else {
-          await transaction.insert(realtimeControllerAdmissionLeases).values({
-            roomId: roomLease.roomId,
-            controllerId,
-            leaseToken: lease.leaseToken,
-            instanceId: this.instanceId,
-          });
-        }
+        await transaction.insert(realtimeControllerAdmissionLeases).values({
+          roomId: roomLease.roomId,
+          controllerId,
+          leaseToken: lease.leaseToken,
+          instanceId: this.instanceId,
+        });
         return { ok: true, lease };
       });
     } catch (error) {
@@ -1388,7 +1361,34 @@ export const createLocalRealtimeAdmissionService = ({
 }: {
   instanceId?: string;
 } = {}): RealtimeAdmissionService => {
+  type LocalRoomAdmission = {
+    lease: RealtimeRoomLease;
+    maxControllers: number;
+    controllers: Map<string, RealtimeControllerLease>;
+  };
+
   let draining = false;
+  const rooms = new Map<string, LocalRoomAdmission>();
+
+  const readRoom = (lease: RealtimeRoomLease): LocalRoomAdmission | null => {
+    const room = rooms.get(lease.roomId);
+    return room?.lease.leaseToken === lease.leaseToken ? room : null;
+  };
+
+  const readController = (
+    lease: RealtimeControllerLease,
+  ): RealtimeControllerLease | null => {
+    const controller = rooms
+      .get(lease.roomId)
+      ?.controllers.get(lease.controllerId);
+    return controller?.leaseToken === lease.leaseToken ? controller : null;
+  };
+
+  const deleteController = (lease: RealtimeControllerLease): void => {
+    if (!readController(lease)) return;
+    rooms.get(lease.roomId)?.controllers.delete(lease.controllerId);
+  };
+
   return {
     start: async () => undefined,
     beginDrain: async () => {
@@ -1396,36 +1396,119 @@ export const createLocalRealtimeAdmissionService = ({
     },
     stop: async () => {
       draining = true;
+      rooms.clear();
     },
-    admitRoom: async ({ roomId }) =>
-      draining
-        ? denial(
-            "instance_draining",
-            "This server is draining. Please try again.",
-          )
-        : {
-            ok: true,
-            lease: { roomId, leaseToken: createLeaseToken() },
-          },
-    releaseRoom: async () => undefined,
-    admitController: async ({ roomLease, controllerId, existingLease }) =>
-      draining && !existingLease
-        ? denial(
-            "instance_draining",
-            "This server is draining. Please try again.",
-          )
-        : {
-            ok: true,
-            lease:
-              existingLease ??
-              ({
-                roomId: roomLease.roomId,
-                controllerId,
-                leaseToken: createLeaseToken(),
-              } satisfies RealtimeControllerLease),
-          },
+    admitRoom: async ({ roomId, maxControllers, replacingLease }) => {
+      if (draining) {
+        return denial(
+          "instance_draining",
+          "This server is draining. Please try again.",
+        );
+      }
+      if (rooms.has(roomId)) {
+        return denial(
+          "room_conflict",
+          "That room code is already in use. Please try again.",
+          1,
+        );
+      }
+      if (replacingLease && !readRoom(replacingLease)) {
+        return denial(
+          "authority_unavailable",
+          "The previous room reservation could not be replaced safely.",
+        );
+      }
+
+      const lease = { roomId, leaseToken: createLeaseToken() };
+      if (replacingLease) rooms.delete(replacingLease.roomId);
+      rooms.set(roomId, {
+        lease,
+        maxControllers,
+        controllers: new Map(),
+      });
+      return { ok: true, lease };
+    },
+    releaseRoom: async (lease) => {
+      if (readRoom(lease)) rooms.delete(lease.roomId);
+    },
+    admitController: async ({
+      roomLease,
+      controllerId,
+      existingLease,
+      replacingLease,
+    }) => {
+      if (draining && !existingLease) {
+        return denial(
+          "instance_draining",
+          "This server is draining. Please try again.",
+        );
+      }
+
+      const room = readRoom(roomLease);
+      if (!room) {
+        return denial(
+          "authority_unavailable",
+          "Room capacity authority expired. Please retry from the host.",
+        );
+      }
+
+      const current = room.controllers.get(controllerId);
+      if (
+        current &&
+        (!existingLease || current.leaseToken !== existingLease.leaseToken)
+      ) {
+        return denial(
+          "controller_conflict",
+          "Controller slot is unavailable.",
+          null,
+        );
+      }
+      if (existingLease && !readController(existingLease)) {
+        return denial(
+          "controller_conflict",
+          "Controller slot is unavailable.",
+          null,
+        );
+      }
+      if (replacingLease && !readController(replacingLease)) {
+        return denial(
+          "authority_unavailable",
+          "The previous controller reservation could not be replaced safely.",
+        );
+      }
+
+      const lease = {
+        roomId: roomLease.roomId,
+        controllerId,
+        leaseToken: createLeaseToken(),
+      };
+      if (current && existingLease) {
+        room.controllers.set(controllerId, lease);
+        if (
+          replacingLease &&
+          replacingLease.leaseToken !== existingLease.leaseToken
+        ) {
+          deleteController(replacingLease);
+        }
+        return { ok: true, lease };
+      }
+
+      const replacementUsesTargetRoom =
+        replacingLease?.roomId === roomLease.roomId;
+      const effectiveControllerCount =
+        room.controllers.size - (replacementUsesTargetRoom ? 1 : 0);
+      if (effectiveControllerCount >= room.maxControllers) {
+        return denial("room_full", "Room full", null);
+      }
+
+      if (replacingLease) deleteController(replacingLease);
+      room.controllers.set(controllerId, lease);
+      return { ok: true, lease };
+    },
     markControllerDisconnected: async () => undefined,
-    releaseController: async () => undefined,
+    releaseController: async (lease) => {
+      deleteController(lease);
+    },
     getStatus: () => ({
       contractVersion: REALTIME_ADMISSION_POLICY.contractVersion,
       authority: "local",
