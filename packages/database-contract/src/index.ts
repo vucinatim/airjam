@@ -410,7 +410,6 @@ export const deriveOperationalBudgetAuthoritySnapshot = ({
 };
 
 export type RuntimeDatabaseSchemaOptions = {
-  appIdGameIdReference?: () => AnyPgColumn;
   appIdOwnerScopeReference?: () => {
     gameId: AnyPgColumn;
     creatorId: AnyPgColumn;
@@ -418,11 +417,11 @@ export type RuntimeDatabaseSchemaOptions = {
 };
 
 export const createRuntimeDatabaseSchema = ({
-  appIdGameIdReference,
   appIdOwnerScopeReference,
 }: RuntimeDatabaseSchemaOptions = {}) => {
-  const appIdGameIdColumn = appIdGameIdReference
-    ? text("game_id").references(appIdGameIdReference)
+  const appIdOwnerScope = appIdOwnerScopeReference?.();
+  const appIdGameIdColumn = appIdOwnerScope
+    ? text("game_id").references(() => appIdOwnerScope.gameId)
     : text("game_id");
 
   const appIds = pgTable(
@@ -438,13 +437,15 @@ export const createRuntimeDatabaseSchema = ({
       lastUsedAt: timestamp("last_used_at"),
     },
     (table) => {
-      const ownerScope = appIdOwnerScopeReference?.();
-      return ownerScope
+      return appIdOwnerScope
         ? [
             foreignKey({
               name: "app_ids_game_creator_fk",
               columns: [table.gameId, table.creatorId],
-              foreignColumns: [ownerScope.gameId, ownerScope.creatorId],
+              foreignColumns: [
+                appIdOwnerScope.gameId,
+                appIdOwnerScope.creatorId,
+              ],
             }),
           ]
         : [];

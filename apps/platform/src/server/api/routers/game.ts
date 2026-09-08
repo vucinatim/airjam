@@ -374,9 +374,19 @@ export const gameRouter = createTRPCRouter({
     .query(async ({ input, ctx }) => {
       await assertOwnedGame(input.gameId, ctx.user.id);
 
-      const appId = await db.query.appIds.findFirst({
-        where: (appIds, { eq }) => eq(appIds.gameId, input.gameId),
-      });
+      const [appId] = await db
+        .select({
+          id: appIds.id,
+          gameId: appIds.gameId,
+          key: appIds.key,
+          allowedOrigins: appIds.allowedOrigins,
+          isActive: appIds.isActive,
+          createdAt: appIds.createdAt,
+          lastUsedAt: appIds.lastUsedAt,
+        })
+        .from(appIds)
+        .where(eq(appIds.gameId, input.gameId))
+        .limit(1);
 
       return appId;
     }),
