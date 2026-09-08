@@ -1,7 +1,7 @@
 # Production Lifecycle Cleanup Proof
 
 Last updated: 2026-09-08
-Status: Gate `G3-02` full storage-retention lifecycle implemented and locally proven; production rollout pending
+Status: Gate `G3-02` full storage-retention lifecycle reviewed, merged, and scheduled in production; observation and rollback proof remain
 
 ## Outcome
 
@@ -178,12 +178,9 @@ and publish transitions.
 
 ## Remaining Gate Work
 
-This does not close `G3-02`. Realtime global admission, overload drills, and
-explicit production migration and worker rollout remain. A read-only Railway
-inspection on `2026-08-30`
-confirmed that both production and pull request `#69` still contain the three
-existing application services plus PostgreSQL, without the new
-`air-jam-platform-worker` service. Cleanup therefore cannot run prematurely,
-but the fourth-service provisioning, configuration, health, drain, retry, and
-rollback proof remain mandatory rollout work. Production data and
-infrastructure were not mutated by this proof.
+This does not close `G3-02`. Realtime global admission and the production
+worker are now reviewed, merged, deployed, and initially healthy. The worker's
+lifecycle-cleanup authority reported ready on deployment
+`a667f069-1609-4586-80ab-4befae6de106`. Deliberate overload drills plus a
+retained observation window covering cleanup, retry, drain, cost, and rollback
+remain mandatory closure evidence.
