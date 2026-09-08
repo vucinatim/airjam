@@ -52,6 +52,8 @@ test("airjam exposes dev help", () => {
   assert.match(output, /--secure/);
   assert.match(output, /--preview-managed/);
   assert.match(output, /--server-only/);
+  assert.match(output, /AIR_JAM_SERVER_PORT/);
+  assert.match(output, /parallel agents/);
 });
 
 test("airjam exposes secure:init help", () => {
@@ -68,6 +70,7 @@ test("airjam exposes topology help", () => {
   assert.match(output, /Usage: airjam topology/);
   assert.match(output, /--mode <mode>/);
   assert.match(output, /standalone-dev/);
+  assert.match(output, /VITE_PORT/);
 });
 
 test("airjam exposes status help", () => {

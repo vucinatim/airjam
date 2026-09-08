@@ -1943,6 +1943,18 @@ const buildProgram = () => {
       "Reuse an already-running Vite server on the game port",
       false,
     )
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Network isolation:",
+        "  VITE_PORT=<port>                 Game app port (default: 5173)",
+        "  AIR_JAM_SERVER_PORT=<port>       Local server port (default: 4000)",
+        "  VITE_AIR_JAM_PUBLIC_HOST=<url>   Explicit host/controller origin",
+        "",
+        "Set all three when parallel agents or local projects need isolated dev stacks.",
+      ].join("\n"),
+    )
     .action(async () => {
       await runGameDevCli({
         argv: normalizeRuntimeCliArgv(process.argv.slice(3)),
@@ -2028,6 +2040,10 @@ const buildProgram = () => {
       "--secure",
       "Resolve standalone local topology using trusted local HTTPS",
       false,
+    )
+    .addHelpText(
+      "after",
+      "\nTopology honors VITE_PORT, AIR_JAM_SERVER_PORT, VITE_AIR_JAM_SERVER_URL, and VITE_AIR_JAM_PUBLIC_HOST.\n",
     )
     .action(async () => {
       await runProjectTopologyCli({

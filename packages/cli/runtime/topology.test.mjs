@@ -6,7 +6,7 @@ import { resolveProjectSurfaceTopology } from "./topology.mjs";
 
 test("standalone topology consumes the validated numeric Vite port", () => {
   const env = loadCreateAirJamRuntimeEnv({
-    env: { VITE_PORT: "53417" },
+    env: { VITE_PORT: "53417", AIR_JAM_SERVER_PORT: "43400" },
     boundary: "create-airjam.topology-test",
   });
   const topology = resolveProjectSurfaceTopology({
@@ -20,6 +20,7 @@ test("standalone topology consumes the validated numeric Vite port", () => {
   assert.equal(new URL(topology.appOrigin).port, "53417");
   assert.equal(new URL(topology.publicHost).port, "53417");
   assert.equal(new URL(topology.socketOrigin).port, "53417");
+  assert.equal(topology.backendOrigin, "http://127.0.0.1:43400");
 });
 
 test("standalone topology consumes the validated default Vite port", () => {

@@ -66,6 +66,14 @@ export const reserveLoopbackPort = () =>
     });
   });
 
+export const reserveDistinctLoopbackPorts = async (count) => {
+  const ports = new Set();
+  while (ports.size < count) {
+    ports.add(await reserveLoopbackPort());
+  }
+  return [...ports];
+};
+
 export const resolveGoldenPathTemporaryRoot = ({
   environment = process.env,
   systemTemporaryRoot = os.tmpdir(),
@@ -533,11 +541,7 @@ export const runGoldenPathBootstrap = async ({
   let managedDevStarted = false;
   let managedDevProcessId = null;
   let primaryError = null;
-  const port = await reserveLoopbackPort();
-  let gamePort = await reserveLoopbackPort();
-  while (gamePort === port) {
-    gamePort = await reserveLoopbackPort();
-  }
+  const [port, serverPort, gamePort] = await reserveDistinctLoopbackPorts(3);
   const registryUrl = `http://127.0.0.1:${port}`;
   const commandEnv = {
     ...process.env,
@@ -545,8 +549,10 @@ export const runGoldenPathBootstrap = async ({
     NO_UPDATE_NOTIFIER: "1",
     NO_COLOR: "1",
     FORCE_COLOR: "0",
+    AIR_JAM_SERVER_PORT: String(serverPort),
     VITE_PORT: String(gamePort),
-    AIRJAM_DEVTOOLS_KNOWN_PORTS: `4000,${gamePort}`,
+    VITE_AIR_JAM_PUBLIC_HOST: `http://127.0.0.1:${gamePort}`,
+    AIRJAM_DEVTOOLS_KNOWN_PORTS: `${serverPort},${gamePort}`,
     npm_config_audit: "false",
     npm_config_cache: path.join(runRoot, "npm-cache"),
     npm_config_registry: registryUrl,

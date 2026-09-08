@@ -1,6 +1,8 @@
 import { validateEnv } from "@air-jam/env";
 import { z } from "zod";
 
+export const DEFAULT_AIR_JAM_SERVER_PORT = 4000;
+
 const trimToUndefined = (value) => {
   if (typeof value !== "string") {
     return undefined;
@@ -52,6 +54,10 @@ const positiveIntegerFromEnv = (envKey, fallback) =>
 
 const createAirJamRuntimeEnvSchema = z.object({
   VITE_PORT: positiveIntegerFromEnv("VITE_PORT", 5173),
+  AIR_JAM_SERVER_PORT: positiveIntegerFromEnv(
+    "AIR_JAM_SERVER_PORT",
+    DEFAULT_AIR_JAM_SERVER_PORT,
+  ),
   AIR_JAM_SECURE_MODE: optionalEnumFromEnv("AIR_JAM_SECURE_MODE", [
     "local",
     "tunnel",
@@ -79,7 +85,17 @@ export const loadCreateAirJamRuntimeEnv = ({
     keyHints: {
       VITE_PORT:
         "Set a positive integer Vite port (for example: VITE_PORT=5173).",
+      AIR_JAM_SERVER_PORT:
+        "Set a positive integer local server port (for example: AIR_JAM_SERVER_PORT=4000).",
       AIR_JAM_SECURE_MODE:
         "Use AIR_JAM_SECURE_MODE=local or AIR_JAM_SECURE_MODE=tunnel.",
     },
   });
+
+export const resolveLocalBackendOrigin = (env = {}) => {
+  const explicitOrigin = env.VITE_AIR_JAM_SERVER_URL?.trim();
+  return (
+    explicitOrigin ||
+    `http://127.0.0.1:${env.AIR_JAM_SERVER_PORT ?? DEFAULT_AIR_JAM_SERVER_PORT}`
+  );
+};

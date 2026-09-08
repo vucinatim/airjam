@@ -8,7 +8,7 @@ import { stopChild } from "../../lib/process-child.mjs";
 import { resolvePublicPackages } from "../../release/public-packages.mjs";
 import {
   prepareGoldenPathCandidateRegistry,
-  reserveLoopbackPort,
+  reserveDistinctLoopbackPorts,
 } from "./golden-path-bootstrap.mjs";
 import {
   defaultGoldenPathManifestPath,
@@ -346,6 +346,8 @@ export const buildGoldenPathCommandEnv = ({
   stagingUrl,
   runRoot,
   registryUrl,
+  gamePort,
+  serverPort,
   sourceEnv = process.env,
 }) => {
   const safePath = [
@@ -381,6 +383,10 @@ export const buildGoldenPathCommandEnv = ({
     TERM: sourceEnv.TERM ?? "dumb",
     AIRJAM_PLATFORM_URL: stagingUrl,
     AIRJAM_STATE_DIR: path.join(runRoot, "state"),
+    AIRJAM_DEVTOOLS_KNOWN_PORTS: `${serverPort},${gamePort}`,
+    AIR_JAM_SERVER_PORT: String(serverPort),
+    VITE_PORT: String(gamePort),
+    VITE_AIR_JAM_PUBLIC_HOST: `http://127.0.0.1:${gamePort}`,
     CI: sourceEnv.CI ?? "1",
     NO_UPDATE_NOTIFIER: "1",
     NO_COLOR: "1",
@@ -536,22 +542,21 @@ const readBlockedTerminalRecord = ({ evidenceDir, runId }) => {
     relativePath: "failures/index.json",
     runId,
   });
-  const record = index?.records.find((entry) => entry?.result === "blocked");
-  if (
-    !record ||
-    typeof record.firstFailingStage !== "string" ||
-    typeof record.responsibleSurface !== "string" ||
-    typeof record.observation !== "string" ||
-    typeof record.expected !== "string" ||
-    !["product", "client", "environment", "harness", "external"].includes(
-      record.classification,
-    ) ||
-    !Array.isArray(record.stagesNotAttempted) ||
-    record.stagesNotAttempted.length === 0
-  ) {
-    return null;
-  }
-  return record;
+  return (
+    index?.records.find(
+      (entry) =>
+        entry?.result === "blocked" &&
+        typeof entry.firstFailingStage === "string" &&
+        typeof entry.responsibleSurface === "string" &&
+        typeof entry.observation === "string" &&
+        typeof entry.expected === "string" &&
+        ["product", "client", "environment", "harness", "external"].includes(
+          entry.classification,
+        ) &&
+        Array.isArray(entry.stagesNotAttempted) &&
+        entry.stagesNotAttempted.length > 0,
+    ) ?? null
+  );
 };
 
 export const verifyPrimaryRun = ({
@@ -796,12 +801,15 @@ export const runGoldenPathPrimary = async ({
   };
   writeDurableControllerState("preparing");
 
-  const registryPort = await reserveLoopbackPort();
+  const [registryPort, serverPort, gamePort] =
+    await reserveDistinctLoopbackPorts(3);
   const registryUrl = `http://127.0.0.1:${registryPort}`;
   const commandEnv = buildGoldenPathCommandEnv({
     stagingUrl: normalizedStagingUrl,
     runRoot,
     registryUrl,
+    gamePort,
+    serverPort,
   });
   const startedAt = new Date().toISOString();
   const controllerCommands = [];

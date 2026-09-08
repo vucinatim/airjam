@@ -10,7 +10,10 @@ import {
   loadEnvFile,
   waitForPort,
 } from "./dev-utils.mjs";
-import { loadCreateAirJamRuntimeEnv } from "./runtime-env.mjs";
+import {
+  loadCreateAirJamRuntimeEnv,
+  resolveLocalBackendOrigin,
+} from "./runtime-env.mjs";
 import {
   buildStandaloneGameTopology,
   serializeResolvedTopology,
@@ -60,6 +63,11 @@ const usage = () => {
   console.log(
     "  --allow-existing-game Reuse an already-running Vite server on the game port",
   );
+  console.log("");
+  console.log("Network isolation:");
+  console.log("  VITE_PORT                    Game app port (default: 5173)");
+  console.log("  AIR_JAM_SERVER_PORT          Local server port (default: 4000)");
+  console.log("  VITE_AIR_JAM_PUBLIC_HOST     Explicit host/controller origin");
 };
 
 const getDefaultPublicHost = (env, gamePort) => {
@@ -144,7 +152,7 @@ const formatProcessSummary = (summary) => {
   return `pid ${summary.pid}${age}${command}`;
 };
 
-const startServerIfNeeded = async (processGroup, serverPort) => {
+const startServerIfNeeded = async (processGroup, serverPort, env) => {
   const hasExistingServer = await isPortOpen(serverPort);
   if (hasExistingServer) {
     const summary = readProcessSummary(readListeningPid(serverPort));
@@ -154,7 +162,13 @@ const startServerIfNeeded = async (processGroup, serverPort) => {
     return false;
   }
 
-  processGroup.run("server", "pnpm", ["exec", "air-jam-server"]);
+  processGroup.run("server", "pnpm", ["exec", "air-jam-server"], {
+    env: {
+      ...process.env,
+      ...env,
+      PORT: String(serverPort),
+    },
+  });
   await waitForPort(serverPort, START_TIMEOUT_MS);
   return true;
 };
@@ -360,7 +374,6 @@ export const runGameDevCli = async ({
   cwd = process.cwd(),
   argv = process.argv.slice(2),
   env = process.env,
-  serverPort = 4000,
 } = {}) => {
   loadEnvFile(path.join(cwd, ".env"), env);
   loadEnvFile(path.join(cwd, ".env.local"), env);
@@ -368,6 +381,8 @@ export const runGameDevCli = async ({
     env,
     boundary: "create-airjam.dev",
   });
+  const serverPort = runtimeEnv.AIR_JAM_SERVER_PORT;
+  const backendOrigin = resolveLocalBackendOrigin(runtimeEnv);
   const secureRootDir = runtimeEnv.AIR_JAM_SECURE_ROOT
     ? path.resolve(cwd, runtimeEnv.AIR_JAM_SECURE_ROOT)
     : cwd;
@@ -410,15 +425,19 @@ export const runGameDevCli = async ({
           secureState,
           webOnly: args.webOnly,
           env: runtimeEnv,
+          backendOrigin,
         })
       : {
           VITE_AIR_JAM_RUNTIME_TOPOLOGY: serializeResolvedTopology(
             buildStandaloneGameTopology({
               surfaceRole: "host",
               publicHost: getDefaultPublicHost(env, publicGamePort),
+              backendOrigin,
             }),
           ),
           VITE_AIR_JAM_PUBLIC_HOST: getDefaultPublicHost(env, publicGamePort),
+          VITE_AIR_JAM_SERVER_URL: backendOrigin,
+          AIR_JAM_DEV_PROXY_BACKEND_URL: backendOrigin,
           VITE_PORT: String(viteGamePort),
           ...(args.webOnly && runtimeEnv.VITE_AIR_JAM_SERVER_URL
             ? {
@@ -431,7 +450,7 @@ export const runGameDevCli = async ({
       await ensurePreviewManagedServer({
         cwd,
         serverPort,
-        env,
+        env: runtimeEnv,
       });
       if (previewManagedPorts?.usesPreviewProxy) {
         console.log(
@@ -450,7 +469,11 @@ export const runGameDevCli = async ({
 
     let startedServer = false;
     if (!args.webOnly) {
-      startedServer = await startServerIfNeeded(processGroup, serverPort);
+      startedServer = await startServerIfNeeded(
+        processGroup,
+        serverPort,
+        runtimeEnv,
+      );
     } else {
       console.log(
         "[dev] Web-only mode: skipping local Air Jam server startup.",

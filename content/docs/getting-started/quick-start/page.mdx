@@ -113,6 +113,19 @@ pnpm exec airjam ai-pack repair --dir .
 2. Confirm server health: [http://localhost:4000/health](http://localhost:4000/health).
 3. Confirm your game is using `http://localhost:4000` for `VITE_AIR_JAM_SERVER_URL` (or no override at all for local defaults).
 
+### Local port already in use
+
+Each parallel agent or project can run an isolated stack without stopping another one:
+
+```bash
+AIR_JAM_SERVER_PORT=4400 \
+VITE_PORT=5573 \
+VITE_AIR_JAM_PUBLIC_HOST=http://127.0.0.1:5573 \
+pnpm run dev
+```
+
+`pnpm exec airjam topology --mode=standalone-dev` honors the same environment, so the CLI, semantic sessions, QR URL, Vite proxy, and local server stay on one coherent topology.
+
 ### App ID errors in deployed environments
 
 1. Ensure `VITE_AIR_JAM_APP_ID` is set in your host platform.

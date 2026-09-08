@@ -6,13 +6,15 @@ import {
   hasFlag,
   loadEnvFile,
 } from "./dev-utils.mjs";
-import { loadCreateAirJamRuntimeEnv } from "./runtime-env.mjs";
+import {
+  loadCreateAirJamRuntimeEnv,
+  resolveLocalBackendOrigin,
+} from "./runtime-env.mjs";
 import {
   DEFAULT_GAME_PORT,
   loadSecureDevState,
   SECURE_MODE_LOCAL,
 } from "./secure-dev.mjs";
-import { DEFAULT_AIR_JAM_DEV_BACKEND_URL } from "./vite-https.mjs";
 
 const SUPPORTED_MODES = new Set([
   "standalone-dev",
@@ -70,8 +72,7 @@ export const resolveProjectSurfaceTopology = ({
       runtimeMode: secure ? "standalone-secure" : "standalone-dev",
       surfaceRole,
       appOrigin: publicHost,
-      backendOrigin:
-        env.VITE_AIR_JAM_SERVER_URL || DEFAULT_AIR_JAM_DEV_BACKEND_URL,
+      backendOrigin: resolveLocalBackendOrigin(env),
       publicHost,
       secureTransport: secure,
     });

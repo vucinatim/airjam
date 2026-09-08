@@ -160,6 +160,8 @@ test("primary-run child environment drops inherited credentials and isolates cac
     stagingUrl: "https://air-jam-platform-pr-123.example.test",
     runRoot,
     registryUrl: "http://127.0.0.1:4873",
+    serverPort: 4400,
+    gamePort: 5573,
     sourceEnv: {
       PATH: process.env.PATH,
       USER: "external-agent",
@@ -175,6 +177,15 @@ test("primary-run child environment drops inherited credentials and isolates cac
   assert.equal(environment.XDG_CACHE_HOME, `${runRoot}/cache`);
   assert.equal(environment.npm_config_cache, `${runRoot}/npm-cache`);
   assert.equal(environment.pnpm_config_store_dir, `${runRoot}/pnpm-store`);
+  assert.equal(environment.AIR_JAM_SERVER_PORT, "4400");
+  assert.equal(environment.VITE_PORT, "5573");
+  assert.equal(
+    environment.VITE_AIR_JAM_PUBLIC_HOST,
+    "http://127.0.0.1:5573",
+  );
+  assert.equal(environment.VITE_AIR_JAM_SERVER_URL, undefined);
+  assert.equal(environment.AIR_JAM_DEV_PROXY_BACKEND_URL, undefined);
+  assert.equal(environment.AIRJAM_DEVTOOLS_KNOWN_PORTS, "4400,5573");
 });
 
 test("primary-run control checkpoint rejects failed MCP closes", () => {
@@ -226,6 +237,11 @@ test("primary verifier preserves a complete classified blocker", () => {
             records:
               relativePath === "failures/index.json"
                 ? [
+                    {
+                      result: "blocked",
+                      stage: "semantic-session-open",
+                      classification: "environment",
+                    },
                     {
                       result: "blocked",
                       firstFailingStage: "create-project",
