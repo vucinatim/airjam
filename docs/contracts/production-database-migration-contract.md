@@ -1,6 +1,6 @@
 # Production Database Migration Contract
 
-Last updated: 2026-09-04
+Last updated: 2026-09-08
 Status: canonical contract
 
 ## Purpose
@@ -75,9 +75,13 @@ The lifecycle is:
    idempotency key, and `--apply`. It rechecks every binding, pauses only the
    declared lanes, drains active jobs, applies Drizzle migrations, and verifies
    the journal and declared database objects. It does not reopen lanes.
-4. the exact planned application revision is deployed.
+4. the reviewed source tree is deployed, either as the source commit itself or
+   as a GitHub merge commit that contains the source commit without changing
+   its tree.
 5. `verify` independently checks the database again and, for production, calls
-   the deployed `/api/readiness` endpoint and requires the exact planned Git
+   the deployed `/api/readiness` endpoint, requires an explicit exact deployed
+   Git revision, proves that revision contains the reviewed source commit with
+   an identical Git tree, and requires production to report that exact
    revision. Only then does it restore lanes that the migration paused.
 
 Apply and verify share one PostgreSQL advisory lifecycle lock. This prevents
@@ -145,16 +149,23 @@ data verification are defined by the
 
 ## Production Sequence
 
-Production plans are created only from the clean, merged commit intended for
-deployment. Because `main` is the production branch, agents should keep the
-merge-to-apply interval short:
+Production plans are created from the clean, fully reviewed PR head. The merge
+commit may have a different commit identity, but its tree must remain identical
+to the reviewed source and the source commit must be its ancestor. Because
+`main` is the production branch, agents should keep the merge-to-apply interval
+short:
 
-1. merge the reviewed migration commit
-2. inspect and create the production plan against the explicit Railway
-   environment
+1. inspect and create the production plan from the final green, reviewed PR
+   head against the explicit Railway environment
+2. merge that exact head without introducing tree changes
 3. apply the plan while the new deployment is progressing
-4. wait for the exact revision to become current and ready
-5. verify the plan and allow the lifecycle to restore affected lanes
+4. wait for the merge revision to become current and ready, then fetch `main`
+   so that exact merge commit is present in the operator's local Git object
+   database
+5. verify with the full 40-character lowercase
+   `--deployed-revision <merge-commit>`; verification also requires the supplied
+   platform origin to identify itself as the canonical non-preview production
+   origin for the plan's provider and environment before it restores lanes
 
 Do not invoke raw `drizzle-kit migrate`, extract a production URL into a shell,
 or restore lanes manually during the normal path.

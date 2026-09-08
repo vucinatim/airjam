@@ -267,7 +267,7 @@ const isLoopbackHostname = (hostname: string): boolean => {
   );
 };
 
-const parsePlatformOrigin = (rawUrl: string): string => {
+export const parsePlatformOrigin = (rawUrl: string): string => {
   const origin = parseOrigin(
     rawUrl,
     "INVALID_PLATFORM_URL",
