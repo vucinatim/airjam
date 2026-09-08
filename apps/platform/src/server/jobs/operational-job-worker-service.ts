@@ -14,9 +14,10 @@ import {
 import { runDueOperationalSynthetics } from "@/server/operations/operational-synthetic-scheduler";
 import { resolveOperationalSyntheticRuntimeConfig } from "@/server/operations/operational-synthetic-service";
 import {
-  createRailwayBudgetEvidenceAdapter,
-  resolveRailwayBudgetEvidenceConfig,
-} from "@/server/operations/railway-budget-evidence-adapter";
+  PlatformSchemaIncompatibleError,
+  readPlatformSchemaCompatibility,
+  type PlatformSchemaCompatibility,
+} from "@/server/operations/platform-schema-compatibility";
 import {
   inspectOperationalBudgetRefreshAuthority,
   isOperationalBudgetRefreshAuthorityFresh,
@@ -29,15 +30,15 @@ import {
   type OperationalBudgetStatus,
 } from "@/server/operations/production-budget-service";
 import {
-  PlatformSchemaIncompatibleError,
-  readPlatformSchemaCompatibility,
-  type PlatformSchemaCompatibility,
-} from "@/server/operations/platform-schema-compatibility";
+  createRailwayBudgetEvidenceAdapter,
+  resolveRailwayBudgetEvidenceConfig,
+} from "@/server/operations/railway-budget-evidence-adapter";
 import { applyProductTelemetryRetention } from "@/server/product-telemetry/persistence";
 import { validateEnv } from "@air-jam/env";
 import {
   normalizeUnknownOperationalFailure,
   operationalIdentifierSchema,
+  resolveDeploymentEnvironment,
 } from "@air-jam/operations-contract";
 import { createServer, type ServerResponse } from "node:http";
 import { z } from "zod";
@@ -84,8 +85,10 @@ const positiveInteger = (fallback: number) =>
 
 const workerEnvSchema = z
   .object({
+    NODE_ENV: optionalTrimmedString,
     PORT: optionalTrimmedString,
     RAILWAY_ENVIRONMENT_NAME: optionalTrimmedString,
+    AIRJAM_OPERATIONAL_ENVIRONMENT: optionalTrimmedString,
     RAILWAY_PROJECT_ID: optionalTrimmedString,
     RAILWAY_ENVIRONMENT_ID: optionalTrimmedString,
     RAILWAY_PROJECT_TOKEN: optionalTrimmedString,
@@ -112,15 +115,17 @@ const workerEnvSchema = z
     AIRJAM_PLATFORM_WORKER_DRAIN_TIMEOUT_MS: positiveInteger(300_000),
   })
   .transform((value, context) => {
-    const production = value.RAILWAY_ENVIRONMENT_NAME === "production";
+    const production =
+      resolveDeploymentEnvironment({
+        NODE_ENV: value.NODE_ENV,
+        RAILWAY_ENVIRONMENT_NAME: value.RAILWAY_ENVIRONMENT_NAME,
+        AIRJAM_OPERATIONAL_ENVIRONMENT: value.AIRJAM_OPERATIONAL_ENVIRONMENT,
+      }) === "production";
     const budgetRefreshEnabled =
       value.AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MODE
         ? value.AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MODE === "enabled"
         : production;
-    if (
-      production &&
-      !value.AIRJAM_PLATFORM_WORKER_CONTROL_TOKEN
-    ) {
+    if (production && !value.AIRJAM_PLATFORM_WORKER_CONTROL_TOKEN) {
       context.addIssue({
         code: "custom",
         path: ["AIRJAM_PLATFORM_WORKER_CONTROL_TOKEN"],
@@ -139,12 +144,13 @@ const workerEnvSchema = z
     if (
       budgetRefreshEnabled &&
       value.AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MS >=
-      PRODUCTION_BUDGET_EVIDENCE_MAX_AGE_MS
+        PRODUCTION_BUDGET_EVIDENCE_MAX_AGE_MS
     ) {
       context.addIssue({
         code: "custom",
         path: ["AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MS"],
-        message: "Budget refresh cadence must be shorter than evidence staleness.",
+        message:
+          "Budget refresh cadence must be shorter than evidence staleness.",
       });
       return z.NEVER;
     }

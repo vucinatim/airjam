@@ -30,6 +30,7 @@ import {
   operationsContractSchemaNames,
   parseOperationsContractValue,
   resolveDeploymentEnvironment,
+  resolveOperationalBudgetRequirement,
 } from "./index.mjs";
 
 const timestamp = "2026-08-30T03:00:00.000Z";
@@ -276,6 +277,19 @@ test("event delivery identity and environment derivation have one contract owner
   assert.equal(
     resolveDeploymentEnvironment({ AIRJAM_OPERATIONAL_ENVIRONMENT: "test" }),
     "test",
+  );
+  assert.equal(
+    resolveOperationalBudgetRequirement({
+      RAILWAY_ENVIRONMENT_NAME: "production",
+    }),
+    "required",
+  );
+  assert.equal(
+    resolveOperationalBudgetRequirement({
+      AIRJAM_OPERATIONAL_ENVIRONMENT: "production",
+      RAILWAY_ENVIRONMENT_NAME: "pr-75",
+    }),
+    "not_applicable",
   );
 });
 

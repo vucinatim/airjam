@@ -81,6 +81,16 @@ test("public install matrix exactly covers the supported OS and Node pairs", () 
 });
 
 test("every public package declares the supported Node floor", () => {
+  const minimumSupportedNodeMajor = Math.min(
+    ...summarizePublicInstallMatrix(readPublicInstallMatrix()).cells.map(
+      (cell) => cell.nodeMajor,
+    ),
+  );
+  assert.equal(
+    rootManifest.engines?.node,
+    `>=${minimumSupportedNodeMajor}.0.0`,
+    "root Node floor must match the canonical install matrix",
+  );
   for (const packageDefinition of resolvePublicPackages()) {
     const manifest = JSON.parse(
       fs.readFileSync(
@@ -88,7 +98,11 @@ test("every public package declares the supported Node floor", () => {
         "utf8",
       ),
     );
-    assert.equal(manifest.engines?.node, rootManifest.engines?.node, manifest.name);
+    assert.equal(
+      manifest.engines?.node,
+      rootManifest.engines?.node,
+      manifest.name,
+    );
   }
 });
 

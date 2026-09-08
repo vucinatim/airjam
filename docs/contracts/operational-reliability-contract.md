@@ -312,8 +312,10 @@ target authority: `RAILWAY_SERVICE_AIR_JAM_PLATFORM_URL`,
 `RAILWAY_SERVICE_AIR_JAM_SERVER_URL`,
 `RAILWAY_SERVICE_AIR_JAM_PLATFORM_WORKER_URL`, and
 `RAILWAY_SERVICE_AIR_JAM_RELEASE_BROWSER_WORKER_URL`. They take precedence over
-production-oriented explicit origins so a cloned preview cannot probe the
-wrong environment.
+production-oriented explicit origins. A preview with a missing sibling URL
+fails closed as `synthetic.target_unconfigured`; it never falls back to a
+cloned production origin. The hosted-release target is likewise unconfigured
+in previews until a separate environment-scoped preview release target exists.
 
 Runtime-reporting environment configuration:
 

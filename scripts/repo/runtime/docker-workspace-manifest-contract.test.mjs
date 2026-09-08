@@ -124,7 +124,7 @@ test("dependency-stage Dockerfiles copy every pnpm workspace manifest", () => {
   }
 });
 
-test("Node-based production Dockerfiles match the repository runtime floor", () => {
+test("repository-owned Node base images meet the runtime floor", () => {
   const minimumNodeMajor = Number.parseInt(
     /^>=(\d+)/u.exec(rootPackageJson.engines?.node ?? "")?.[1] ?? "",
     10,
@@ -138,10 +138,9 @@ test("Node-based production Dockerfiles match the repository runtime floor", () 
     const source = fs.readFileSync(path.join(repoRoot, dockerfilePath), "utf8");
     const configuredMajor = /^ARG NODE_IMAGE=node:(\d+)-/mu.exec(source)?.[1];
     if (!configuredMajor) continue;
-    assert.equal(
-      Number.parseInt(configuredMajor, 10),
-      minimumNodeMajor,
-      `${dockerfilePath} must use the repository minimum Node major`,
+    assert.ok(
+      Number.parseInt(configuredMajor, 10) >= minimumNodeMajor,
+      `${dockerfilePath} must meet the repository minimum Node major`,
     );
   }
 });

@@ -62,6 +62,7 @@ describe("shared operational admission policy", () => {
         lane: "realtime_controller_admission",
         control: control("restricted"),
         budget: { evidenceStatus: "fresh", state: "normal" },
+        budgetRequirement: "required",
         quota: {
           authorityAvailable: false,
           current: null,
@@ -80,6 +81,7 @@ describe("shared operational admission policy", () => {
         lane: "realtime_controller_admission",
         control: control("normal"),
         budget: { evidenceStatus: "fresh", state: "ceiling" },
+        budgetRequirement: "required",
       }),
     ).toMatchObject({
       outcome: "denied",

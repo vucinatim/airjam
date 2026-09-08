@@ -16,6 +16,7 @@ import {
   type OperationalLane,
   type OperationalQuotaKey,
 } from "@air-jam/database-contract";
+import { resolveOperationalBudgetRequirement } from "@air-jam/operations-contract";
 import {
   and,
   count,
@@ -591,6 +592,7 @@ export const decideOperationalQuotaAdmissionWithDatabase = async ({
         requestedAmount,
         control,
         budget,
+        budgetRequirement: resolveOperationalBudgetRequirement(),
         decisionId,
       });
     },

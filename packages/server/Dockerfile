@@ -7,10 +7,6 @@
 # - `runtime` overlays source, builds the server, and stays as the final
 #   image. The workspace install is preserved so the `pnpm --filter ...
 #   start` CMD keeps working unchanged.
-#
-# BuildKit cache mounts persist the pnpm content-addressed store across
-# builds even when the install layer is invalidated, so package downloads
-# don't repeat from the registry.
 
 ARG NODE_IMAGE=node:22-bookworm-slim
 

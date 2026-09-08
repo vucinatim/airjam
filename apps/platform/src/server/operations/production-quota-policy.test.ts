@@ -81,6 +81,7 @@ describe("production quota policy", () => {
           requestedAmount: 1,
           control: control("game_creation"),
           budget: budget(state),
+          budgetRequirement: "required",
           decisionId: `decision-${state}`,
         }),
       ).toMatchObject({
@@ -99,6 +100,7 @@ describe("production quota policy", () => {
       requestedAmount: 1,
       control: control("game_creation", "restricted"),
       budget: budget("normal"),
+      budgetRequirement: "required",
     });
     const protectedDecision = decideOperationalQuotaAdmission({
       lane: "game_creation",
@@ -106,6 +108,7 @@ describe("production quota policy", () => {
       requestedAmount: 1,
       control: control("game_creation"),
       budget: budget("protection"),
+      budgetRequirement: "required",
     });
 
     expect(restricted).toMatchObject({
@@ -131,6 +134,7 @@ describe("production quota policy", () => {
         requestedAmount: 1,
         control: control("browser_validation"),
         budget: budget("near_ceiling"),
+        budgetRequirement: "required",
       }),
     ).toMatchObject({
       outcome: "denied",
@@ -162,6 +166,7 @@ describe("production quota policy", () => {
         decideOperationalQuotaAdmission({
           lane: "game_creation",
           requestedAmount: 1,
+          budgetRequirement: "required",
           ...input,
         }),
       ).toMatchObject({
@@ -179,6 +184,7 @@ describe("production quota policy", () => {
         requestedAmount: 1,
         control: control("game_creation", "paused"),
         budget: budget("normal"),
+        budgetRequirement: "required",
       }),
     ).toMatchObject({
       outcome: "denied",
@@ -195,6 +201,7 @@ describe("production quota policy", () => {
         requestedAmount: 1,
         control: control("release_submission"),
         budget: budget("normal"),
+        budgetRequirement: "required",
       }),
     ).toThrow(OperationalQuotaPolicyError);
 
@@ -205,6 +212,7 @@ describe("production quota policy", () => {
         requestedAmount: 1,
         control: control("game_creation"),
         budget: budget("normal"),
+        budgetRequirement: "required",
       }),
     ).toThrow(OperationalQuotaPolicyError);
 
@@ -215,6 +223,7 @@ describe("production quota policy", () => {
         requestedAmount: -1,
         control: control("game_creation"),
         budget: budget("normal"),
+        budgetRequirement: "required",
       }),
     ).toThrow(OperationalQuotaPolicyError);
   });

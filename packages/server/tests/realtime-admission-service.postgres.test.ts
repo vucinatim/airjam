@@ -1,7 +1,5 @@
-import {
-  REALTIME_ADMISSION_POLICY,
-  type OperationalBudgetRequirement,
-} from "@air-jam/database-contract";
+import { REALTIME_ADMISSION_POLICY } from "@air-jam/database-contract";
+import type { OperationalBudgetRequirement } from "@air-jam/operations-contract";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {

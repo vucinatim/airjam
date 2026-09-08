@@ -1,3 +1,5 @@
+import { resolveDeploymentEnvironment } from "@air-jam/operations-contract";
+
 const LOCAL_FALLBACK = "http://localhost:3000";
 
 const trimToUndefined = (value: string | undefined): string | undefined => {
@@ -98,7 +100,8 @@ export const resolvePlatformDeploymentConfig = (
 ): PlatformDeploymentConfig => {
   const railwayEnvironmentName = trimToUndefined(env.RAILWAY_ENVIRONMENT_NAME);
   const isRailwayPreviewEnvironment =
-    Boolean(railwayEnvironmentName) && railwayEnvironmentName !== "production";
+    Boolean(railwayEnvironmentName) &&
+    resolveDeploymentEnvironment(env) === "preview";
   const railwayPublicUrl = normalizePublicUrl(env.RAILWAY_PUBLIC_DOMAIN);
   const explicitPublicUrl =
     (isRailwayPreviewEnvironment ? railwayPublicUrl : null) ??

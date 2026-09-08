@@ -1,6 +1,9 @@
 import type { Socket } from "socket.io-client";
-import { describe, expect, it } from "vitest";
-import { getOperationalSyntheticCheck } from "./operational-reliability-policy";
+import { describe, expect, it, vi } from "vitest";
+import {
+  getOperationalSyntheticCheck,
+  OPERATIONAL_SYNTHETIC_CHECKS,
+} from "./operational-reliability-policy";
 import {
   anchorOperationalSyntheticRunToDatabaseTime,
   executeOperationalSyntheticCheck,
@@ -23,8 +26,6 @@ const config: OperationalSyntheticRuntimeConfig = {
     "realtime.room_controller": "https://realtime.example.test/",
     "realtime.semantic_action": "https://realtime.example.test/",
   },
-  realtimeOrigin: "https://realtime.example.test",
-  requestOrigin: "https://platform.example.test",
   appId: "app:synthetic-test",
 };
 
@@ -70,10 +71,6 @@ describe("operational synthetic execution", () => {
 
     expect(runtime).toMatchObject({
       environment: "preview",
-      requestOrigin:
-        "https://air-jam-platform-air-jam-pr-109.up.railway.app",
-      realtimeOrigin:
-        "https://air-jam-server-air-jam-pr-109.up.railway.app",
       targets: {
         "platform.readiness":
           "https://air-jam-platform-air-jam-pr-109.up.railway.app/api/readiness",
@@ -85,6 +82,46 @@ describe("operational synthetic execution", () => {
           "https://air-jam-release-browser-worker-air-jam-pr-109.up.railway.app/health",
       },
     });
+  });
+
+  it("fails closed before connecting when a Railway preview sibling is missing", async () => {
+    const runtime = resolveOperationalSyntheticRuntimeConfig({
+      RAILWAY_ENVIRONMENT_NAME: "air-jam-pr-109",
+      RAILWAY_PUBLIC_DOMAIN:
+        "air-jam-platform-worker-air-jam-pr-109.up.railway.app",
+      NEXT_PUBLIC_APP_URL: "https://airjam.io",
+      NEXT_PUBLIC_AIR_JAM_SERVER_URL: "https://api.airjam.io",
+      AIRJAM_SYNTHETIC_HOSTED_RELEASE_URL: "https://games.airjam.dev/release",
+    });
+
+    expect(runtime.targets).toMatchObject({
+      "platform.home": null,
+      "realtime.health": null,
+      "realtime.room_controller": null,
+      "hosted.release": null,
+    });
+
+    const socketFactory = vi.fn();
+    const run = await execute("room-controller", {
+      runtimeConfig: runtime,
+      socketFactory: socketFactory as never,
+    });
+    expect(socketFactory).not.toHaveBeenCalled();
+    expect(run.observations[0]).toMatchObject({
+      status: "error",
+      failure: {
+        code: "synthetic.target_unconfigured",
+        details: { targetKey: "realtime.room_controller" },
+      },
+    });
+  });
+
+  it("declares a runtime target for every synthetic policy step", () => {
+    for (const check of OPERATIONAL_SYNTHETIC_CHECKS) {
+      for (const step of check.steps) {
+        expect(step.targetKey in config.targets).toBe(true);
+      }
+    }
   });
 
   it("anchors persisted chronology to database time without changing measured duration", async () => {

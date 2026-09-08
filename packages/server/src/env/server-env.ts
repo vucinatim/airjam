@@ -1,8 +1,9 @@
-import type { OperationalBudgetRequirement } from "@air-jam/database-contract";
 import { validateEnv } from "@air-jam/env";
 import {
   deploymentEnvironments,
   resolveDeploymentEnvironment,
+  resolveOperationalBudgetRequirement,
+  type OperationalBudgetRequirement,
 } from "@air-jam/operations-contract";
 import { z } from "zod";
 import {
@@ -243,11 +244,10 @@ export const loadServerEnv = (
   // CORS to "*" on previews so socket.io can connect. Production stays
   // strict.
   const railwayEnvironmentName = env.RAILWAY_ENVIRONMENT_NAME?.trim();
-  const isRailwayPreviewEnvironment =
-    Boolean(railwayEnvironmentName) && railwayEnvironmentName !== "production";
   const operationalEnvironment = resolveDeploymentEnvironment(env);
-  const operationalBudgetRequirement: OperationalBudgetRequirement =
-    operationalEnvironment === "production" ? "required" : "not_applicable";
+  const isRailwayPreviewEnvironment =
+    Boolean(railwayEnvironmentName) && operationalEnvironment === "preview";
+  const operationalBudgetRequirement = resolveOperationalBudgetRequirement(env);
 
   const authMode = resolveAuthMode({
     configuredAuthMode: parsed.AIR_JAM_AUTH_MODE as AuthMode | undefined,

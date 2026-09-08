@@ -2,6 +2,7 @@ import {
   DEFAULT_OPERATIONAL_ALERT_ISSUE_MAX_ATTEMPTS,
   DEFAULT_OPERATIONAL_EVENT_DELIVERY_MAX_ATTEMPTS,
   type OperationalAlertV1,
+  type OperationalBudgetRequirement,
   type OperationalEventEnvelopeV1,
   type OperationalFailureV1,
   type OperationalSloEvaluationV1,
@@ -298,19 +299,17 @@ const operationalBudgetBlockedLanes: Readonly<
   ]),
 });
 
-export type OperationalBudgetRequirement = "required" | "not_applicable";
-
 export const decideOperationalAdmissionPolicy = ({
   lane,
   control,
   budget,
-  budgetRequirement = "required",
+  budgetRequirement,
   quota = null,
 }: {
   lane: OperationalLane;
   control: OperationalLaneControlSnapshot | null;
   budget: Pick<OperationalBudgetAuthoritySnapshot, "evidenceStatus" | "state">;
-  budgetRequirement?: OperationalBudgetRequirement;
+  budgetRequirement: OperationalBudgetRequirement;
   quota?: {
     authorityAvailable: boolean;
     current: number | null;

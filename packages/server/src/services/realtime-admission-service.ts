@@ -3,9 +3,9 @@ import {
   readOperationalAuthoritySnapshot,
   REALTIME_ADMISSION_POLICY,
   realtimeAdmissionInstanceIsLive,
-  type OperationalBudgetRequirement,
   type OperationalLane,
 } from "@air-jam/database-contract";
+import type { OperationalBudgetRequirement } from "@air-jam/operations-contract";
 import { and, count, eq, isNull, lte, ne, sql } from "drizzle-orm";
 import {
   operationalBudgetCycles,

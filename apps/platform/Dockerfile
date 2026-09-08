@@ -8,10 +8,6 @@
 # - `builder` runs `next build` with the deps already installed.
 # - `runtime` ships only the Next.js standalone output — no source, no
 #   dev deps, no pnpm — for a small image and fast Railway cold start.
-#
-# BuildKit cache mounts persist the pnpm content-addressed store across
-# builds even when the install layer is invalidated, so package downloads
-# don't repeat from the registry.
 
 ARG NODE_IMAGE=node:22-bookworm-slim
 
