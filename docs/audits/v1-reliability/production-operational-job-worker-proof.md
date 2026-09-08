@@ -96,6 +96,11 @@ liveness check. The standalone build bundles application dependencies and
 copies the official `playwright-core` package beside the worker because its
 optional runtime imports must remain intact.
 
+Scheduled lifecycle cleanup uses one stable system actor with a time-bucketed
+idempotency key. Rolling deployment overlap therefore replays the same command
+instead of treating the new replica's unique worker identity as a conflicting
+request.
+
 The hermetic deploy check copies no `.env*` files except `.env.example`, passes
 only a small non-secret process environment, performs a frozen install and
 platform build, verifies both runtime entries and the packaged Playwright

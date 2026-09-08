@@ -323,6 +323,7 @@ describe("operational job worker service", () => {
     const cycle = deferred<void>();
     const maintenance = deferred<void>();
     const lifecycleCleanup = deferred<void>();
+    let lifecycleCleanupActor: string | null = null;
     handle = await startOperationalJobWorkerService({
       readSchemaCompatibility: readCompatibleSchema,
       env: {
@@ -350,7 +351,8 @@ describe("operational job worker service", () => {
         return { replayed: false, jobs: [] };
       },
       cleanup: async () => ({ candidates: [], cleaned: [] }),
-      scheduleCleanup: async () => {
+      scheduleCleanup: async ({ actor }) => {
+        lifecycleCleanupActor = actor;
         await lifecycleCleanup.promise;
         return { candidates: [], jobs: [] };
       },
@@ -446,6 +448,7 @@ describe("operational job worker service", () => {
         },
       },
     });
+    expect(lifecycleCleanupActor).toBe("air-jam-platform-worker");
 
     await expect(
       readJson(await fetch(`${origin}/status`)),

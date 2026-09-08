@@ -49,6 +49,8 @@ import {
 } from "./operational-job-worker";
 import { cleanupReleaseJobOrphanOutputs } from "./release-job-output-cleanup";
 
+const OPERATIONAL_WORKER_ACTOR = "air-jam-platform-worker";
+
 const optionalTrimmedString = z.preprocess(
   (value) =>
     typeof value === "string" && value.trim() ? value.trim() : undefined,
@@ -592,7 +594,7 @@ export const startOperationalJobWorkerService = async ({
     const bucket = Math.floor(Date.now() / config.lifecycleCleanupMs);
     try {
       await scheduleCleanup({
-        actor: config.workerId,
+        actor: OPERATIONAL_WORKER_ACTOR,
         reason:
           "Platform worker scheduled retention-eligible lifecycle cleanup.",
         idempotencyKey: `worker-lifecycle-cleanup:${bucket}`,
