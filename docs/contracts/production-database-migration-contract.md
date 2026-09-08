@@ -159,9 +159,13 @@ short:
    head against the explicit Railway environment
 2. merge that exact head without introducing tree changes
 3. apply the plan while the new deployment is progressing
-4. wait for the merge revision to become current and ready
-5. verify with `--deployed-revision <merge-commit>` and allow the lifecycle to
-   restore affected lanes
+4. wait for the merge revision to become current and ready, then fetch `main`
+   so that exact merge commit is present in the operator's local Git object
+   database
+5. verify with the full 40-character lowercase
+   `--deployed-revision <merge-commit>`; verification also requires the supplied
+   platform origin to identify itself as the canonical non-preview production
+   origin for the plan's provider and environment before it restores lanes
 
 Do not invoke raw `drizzle-kit migrate`, extract a production URL into a shell,
 or restore lanes manually during the normal path.

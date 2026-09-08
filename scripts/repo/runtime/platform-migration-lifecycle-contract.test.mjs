@@ -6,7 +6,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { readPlatformMigrationCatalog } from "../../platform/lib/platform-migration-catalog.mjs";
-import { inspectPlatformMigrationDeploymentProvenance } from "../../platform/lib/platform-migration-deployment-provenance.mjs";
+import {
+  inspectPlatformMigrationDeploymentProvenance,
+  matchesPlatformMigrationProductionAuthority,
+} from "../../platform/lib/platform-migration-deployment-provenance.mjs";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -75,6 +78,7 @@ test("deployment provenance accepts an exact reviewed tree wrapped by a merge co
   fs.writeFileSync(path.join(root, "contract.txt"), "base\n");
   git("add", "contract.txt");
   git("commit", "--quiet", "-m", "base");
+  const baseCommit = git("rev-parse", "HEAD");
   git("switch", "--quiet", "-c", "reviewed");
   fs.writeFileSync(path.join(root, "contract.txt"), "reviewed\n");
   git("add", "contract.txt");
@@ -103,6 +107,20 @@ test("deployment provenance accepts an exact reviewed tree wrapped by a merge co
   });
   assert.equal(rejected.sourceIsAncestor, true);
   assert.equal(rejected.treesMatch, false);
+
+  git("switch", "--quiet", "-c", "sibling", baseCommit);
+  fs.writeFileSync(path.join(root, "contract.txt"), "reviewed\n");
+  git("add", "contract.txt");
+  git("commit", "--quiet", "-m", "sibling with identical tree");
+  const siblingCommit = git("rev-parse", "HEAD");
+  const unrelated = inspectPlatformMigrationDeploymentProvenance({
+    repoRoot: root,
+    sourceCommit,
+    deployedCommit: siblingCommit,
+  });
+  assert.equal(unrelated.treesMatch, true);
+  assert.equal(unrelated.sourceIsAncestor, false);
+
   assert.throws(
     () =>
       inspectPlatformMigrationDeploymentProvenance({
@@ -111,6 +129,52 @@ test("deployment provenance accepts an exact reviewed tree wrapped by a merge co
         deployedCommit,
       }),
     /full lowercase Git commit SHA/u,
+  );
+  assert.throws(
+    () =>
+      inspectPlatformMigrationDeploymentProvenance({
+        repoRoot: root,
+        sourceCommit,
+        deployedCommit: "0".repeat(40),
+      }),
+    /Deployed revision .* is not present locally/u,
+  );
+});
+
+test("production migration authority rejects preview and mismatched environments", () => {
+  const base = {
+    platformOrigin: "https://airjam.io",
+    requestPolicy: {
+      platformPublicOrigin: "https://airjam.io",
+      isRailwayPreviewEnvironment: false,
+    },
+    deployment: { provider: "railway", environment: "production" },
+    databaseTarget: { kind: "railway", environmentName: "production" },
+  };
+  assert.equal(matchesPlatformMigrationProductionAuthority(base), true);
+  assert.equal(
+    matchesPlatformMigrationProductionAuthority({
+      ...base,
+      requestPolicy: {
+        ...base.requestPolicy,
+        isRailwayPreviewEnvironment: true,
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    matchesPlatformMigrationProductionAuthority({
+      ...base,
+      deployment: { ...base.deployment, environment: "air-jam-pr-107" },
+    }),
+    false,
+  );
+  assert.equal(
+    matchesPlatformMigrationProductionAuthority({
+      ...base,
+      platformOrigin: "https://preview.example",
+    }),
+    false,
   );
 });
 

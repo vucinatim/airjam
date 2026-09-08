@@ -17,9 +17,25 @@ const runGit = ({ repoRoot, args, allowStatus = [] }) => {
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.status !== 0 && !allowStatus.includes(result.status)) {
-    throw new Error(result.stderr.trim() || `git ${args.join(" ")} failed.`);
+    const stderr = result.stderr?.trim();
+    throw new Error(
+      stderr || result.error?.message || `git ${args.join(" ")} failed.`,
+    );
   }
   return { status: result.status, stdout: result.stdout.trim() };
+};
+
+const resolveTree = ({ repoRoot, commit, label }) => {
+  try {
+    return runGit({
+      repoRoot,
+      args: ["rev-parse", "--verify", `${commit}^{tree}`],
+    }).stdout;
+  } catch {
+    throw new Error(
+      `${label} ${commit} is not present locally; fetch the commit before verifying.`,
+    );
+  }
 };
 
 export const inspectPlatformMigrationDeploymentProvenance = ({
@@ -29,14 +45,16 @@ export const inspectPlatformMigrationDeploymentProvenance = ({
 }) => {
   const source = requireCommit(sourceCommit, "Migration source commit");
   const deployed = requireCommit(deployedCommit, "Deployed revision");
-  const sourceTree = runGit({
+  const sourceTree = resolveTree({
     repoRoot,
-    args: ["rev-parse", "--verify", `${source}^{tree}`],
-  }).stdout;
-  const deployedTree = runGit({
+    commit: source,
+    label: "Migration source commit",
+  });
+  const deployedTree = resolveTree({
     repoRoot,
-    args: ["rev-parse", "--verify", `${deployed}^{tree}`],
-  }).stdout;
+    commit: deployed,
+    label: "Deployed revision",
+  });
   const ancestry = runGit({
     repoRoot,
     args: ["merge-base", "--is-ancestor", source, deployed],
@@ -52,3 +70,14 @@ export const inspectPlatformMigrationDeploymentProvenance = ({
     treesMatch: sourceTree === deployedTree,
   };
 };
+
+export const matchesPlatformMigrationProductionAuthority = ({
+  platformOrigin,
+  requestPolicy,
+  deployment,
+  databaseTarget,
+}) =>
+  requestPolicy.platformPublicOrigin === platformOrigin &&
+  !requestPolicy.isRailwayPreviewEnvironment &&
+  deployment.environment === databaseTarget.environmentName &&
+  (databaseTarget.kind !== "railway" || deployment.provider === "railway");

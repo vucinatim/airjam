@@ -35,6 +35,10 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import {
+  parsePlatformOrigin,
+  parseRemoteReleaseOriginReadiness,
+} from "./release-origin-attestation";
 
 // This is a Node-owned source contract shared by generation and the operator.
 import {
@@ -42,7 +46,10 @@ import {
   digestCanonicalJson,
   readPlatformMigrationCatalog,
 } from "../../../scripts/platform/lib/platform-migration-catalog.mjs";
-import { inspectPlatformMigrationDeploymentProvenance } from "../../../scripts/platform/lib/platform-migration-deployment-provenance.mjs";
+import {
+  inspectPlatformMigrationDeploymentProvenance,
+  matchesPlatformMigrationProductionAuthority,
+} from "../../../scripts/platform/lib/platform-migration-deployment-provenance.mjs";
 import {
   createPlatformDatabaseDump,
   platformBackupContractVersion,
@@ -887,7 +894,9 @@ const verifyPlanWithLockHeld = async ({
     return { contractVersion, status: "verified", replayed: true, run };
   }
   const checks = await verifyChecks(client, plan.verificationChecks);
-  const platformUrl = operation.platformUrl?.replace(/\/$/u, "") ?? null;
+  const platformUrl = operation.platformUrl
+    ? parsePlatformOrigin(operation.platformUrl)
+    : null;
   const deployedRevision = operation.deployedRevision?.trim() ?? null;
   let deployment: Record<string, unknown> | null = null;
   if (Boolean(platformUrl) !== Boolean(deployedRevision)) {
@@ -916,17 +925,39 @@ const verifyPlanWithLockHeld = async ({
   }
   if (platformUrl) {
     try {
+      if (!provenance) {
+        throw new Error(
+          "Deployment provenance is required for readiness proof.",
+        );
+      }
       const response = await fetch(`${platformUrl}/api/readiness`);
       deployment = (await response.json()) as Record<string, unknown>;
-      const revision = (
-        deployment.deployment as { revision?: string } | undefined
-      )?.revision;
+      if (response.status !== 200 && response.status !== 503) {
+        throw new Error(
+          `Platform readiness returned unsupported HTTP ${response.status}.`,
+        );
+      }
+      const readiness = parseRemoteReleaseOriginReadiness(
+        deployment,
+        response.status,
+      );
+      if (plan.authority === "production") {
+        checks.push({
+          check: "deployment:production-origin-authority",
+          passed: matchesPlatformMigrationProductionAuthority({
+            platformOrigin: platformUrl,
+            requestPolicy: readiness.requestPolicy,
+            deployment: readiness.deployment,
+            databaseTarget: plan.target.target,
+          }),
+        });
+      }
       checks.push({
         check: "deployment:exact-revision-readiness",
         passed:
           response.ok &&
-          deployment.ok === true &&
-          revision === deployedRevision,
+          readiness.readiness.ok &&
+          readiness.deployment.revision === provenance.deployedCommit,
       });
     } catch (error) {
       deployment = {
