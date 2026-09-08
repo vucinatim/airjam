@@ -1,4 +1,5 @@
 import { REALTIME_ADMISSION_POLICY } from "@air-jam/database-contract";
+import type { OperationalBudgetRequirement } from "@air-jam/operations-contract";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import {
@@ -30,11 +31,15 @@ describeWithPostgres("realtime admission PostgreSQL authority", () => {
     error: vi.fn(),
   } as unknown as ServerLogger;
 
-  const createService = (name: string) =>
+  const createService = (
+    name: string,
+    budgetRequirement: OperationalBudgetRequirement = "required",
+  ) =>
     new DatabaseRealtimeAdmissionService({
       database,
       logger,
       instanceId: `${instancePrefix}-${name}`,
+      budgetRequirement,
     });
 
   beforeEach(async () => {
@@ -165,6 +170,28 @@ describeWithPostgres("realtime admission PostgreSQL authority", () => {
       where room_id = ${room.lease.roomId}
     `;
     expect(remaining[0]!.count).toBe(0);
+  });
+
+  it("uses preview database authority without claiming production budget evidence", async () => {
+    await client`
+      delete from operational_budget_evidence
+      where cycle_id = ${budgetCycleId}
+    `;
+    const service = createService("preview-budget", "not_applicable");
+    await service.start();
+    expect(service.getStatus()).toMatchObject({
+      authority: "database",
+      budgetRequirement: "not_applicable",
+      acceptingNewWork: true,
+    });
+
+    await expect(
+      service.admitRoom({
+        roomId: `PREVIEW-BUDGET-${suffix}`,
+        maxControllers: 8,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    await service.stop();
   });
 
   it("admits atomically at the global burst boundary", async () => {
@@ -652,6 +679,7 @@ describeWithPostgres("realtime admission PostgreSQL authority", () => {
       database: isolatedDatabase,
       logger,
       instanceId: `${instancePrefix}-unavailable-resume`,
+      budgetRequirement: "required",
     });
     await service.start();
     const room = await service.admitRoom({

@@ -7,12 +7,8 @@
 # - `runtime` overlays source, builds the server, and stays as the final
 #   image. The workspace install is preserved so the `pnpm --filter ...
 #   start` CMD keeps working unchanged.
-#
-# BuildKit cache mounts persist the pnpm content-addressed store across
-# builds even when the install layer is invalidated, so package downloads
-# don't repeat from the registry.
 
-ARG NODE_IMAGE=node:20-bookworm-slim
+ARG NODE_IMAGE=node:22-bookworm-slim
 
 # ============================================================================
 # Stage 1: deps — install workspace dependencies
@@ -53,11 +49,9 @@ COPY games/last-band-standing/package.json      ./games/last-band-standing/
 # install runs. Tiny (~12K) — copy the whole dir.
 COPY apps/platform/loader ./apps/platform/loader
 
-# Cache mount id must be `s/<railway-service-id>-<suffix>` so Railway's
-# Metal builder accepts it. The id is hardcoded per service (env vars
-# are not allowed in cache mount ids). Service id below = server.
-RUN --mount=type=cache,id=s/a886cabd-d4a8-486b-8a96-5c96428d507b-pnpm,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+# Keep the dependency layer provider-neutral. Railway cache mounts require a
+# service identity, while the manifest-only layer is already safely cacheable.
+RUN pnpm install --frozen-lockfile
 
 # ============================================================================
 # Stage 2: runtime — build the server and run it

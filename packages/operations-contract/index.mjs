@@ -269,13 +269,18 @@ export const areOperationalEventEnvelopesIdempotentlyEquivalent = (
 };
 
 export const resolveDeploymentEnvironment = (env = process.env) => {
-  const explicit = env.AIRJAM_OPERATIONAL_ENVIRONMENT?.trim();
-  if (deploymentEnvironments.includes(explicit)) return explicit;
   const railway = env.RAILWAY_ENVIRONMENT_NAME?.trim();
   if (railway === "production") return "production";
   if (railway) return "preview";
+  const explicit = env.AIRJAM_OPERATIONAL_ENVIRONMENT?.trim();
+  if (deploymentEnvironments.includes(explicit)) return explicit;
   return env.NODE_ENV === "test" ? "test" : "development";
 };
+
+export const resolveOperationalBudgetRequirement = (env = process.env) =>
+  resolveDeploymentEnvironment(env) === "production"
+    ? "required"
+    : "not_applicable";
 
 const jsonPrimitiveSchema = z.union([
   z.string(),

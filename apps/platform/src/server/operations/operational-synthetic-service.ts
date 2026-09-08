@@ -4,7 +4,10 @@ import {
   operationalSloEvaluations,
   operationalSyntheticRuns,
 } from "@/db/schema";
-import { resolvePlatformDeploymentConfig } from "@/lib/platform-deployment-config";
+import {
+  normalizeOrigin,
+  resolvePlatformDeploymentConfig,
+} from "@/lib/platform-deployment-config";
 import {
   createStructuredOperationalFailure,
   normalizeUnknownOperationalFailure,
@@ -52,8 +55,6 @@ type EventAcknowledgement<E extends SyntheticAcknowledgedEvent> = Parameters<
 export type OperationalSyntheticRuntimeConfig = {
   environment: DeploymentEnvironment;
   targets: Readonly<Record<string, string | null>>;
-  realtimeOrigin: string;
-  requestOrigin: string;
   appId: string | null;
 };
 
@@ -133,36 +134,55 @@ const absoluteUrl = (value: string | undefined): string | null => {
   }
 };
 
+const urlFromOrigin = (origin: string | null, path: string): string | null =>
+  origin ? new URL(path, origin).toString() : null;
+
 export const resolveOperationalSyntheticRuntimeConfig = (
   env: Record<string, string | undefined> = process.env,
 ): OperationalSyntheticRuntimeConfig => {
+  const environment = resolveDeploymentEnvironment(env);
   const platform = resolvePlatformDeploymentConfig(env as NodeJS.ProcessEnv);
-  const platformOrigin = new URL(platform.platformPublicUrl).origin;
-  const realtimeOrigin = new URL(platform.backendPublicUrl).origin;
-  const workerOrigin = absoluteUrl(env.AIRJAM_SYNTHETIC_WORKER_ORIGIN);
-  const browserWorkerOrigin = absoluteUrl(
+  const environmentScopedOrigin = (
+    previewKey: string,
+    productionValue: string | undefined,
+  ): string | null =>
+    platform.isRailwayPreviewEnvironment
+      ? normalizeOrigin(env[previewKey])
+      : normalizeOrigin(productionValue);
+  const platformOrigin = environmentScopedOrigin(
+    "RAILWAY_SERVICE_AIR_JAM_PLATFORM_URL",
+    platform.platformPublicUrl,
+  );
+  const realtimeOrigin = environmentScopedOrigin(
+    "RAILWAY_SERVICE_AIR_JAM_SERVER_URL",
+    platform.backendPublicUrl,
+  );
+  const workerOrigin = environmentScopedOrigin(
+    "RAILWAY_SERVICE_AIR_JAM_PLATFORM_WORKER_URL",
+    env.AIRJAM_SYNTHETIC_WORKER_ORIGIN,
+  );
+  const browserWorkerOrigin = environmentScopedOrigin(
+    "RAILWAY_SERVICE_AIR_JAM_RELEASE_BROWSER_WORKER_URL",
     env.AIRJAM_SYNTHETIC_BROWSER_WORKER_ORIGIN,
   );
+  const hostedReleaseUrl = platform.isRailwayPreviewEnvironment
+    ? null
+    : absoluteUrl(env.AIRJAM_SYNTHETIC_HOSTED_RELEASE_URL);
   return {
-    environment: resolveDeploymentEnvironment(env),
+    environment,
     targets: Object.freeze({
-      "platform.home": new URL("/", platformOrigin).toString(),
-      "platform.docs": new URL("/docs", platformOrigin).toString(),
-      "platform.arcade": new URL("/arcade", platformOrigin).toString(),
-      "platform.health": new URL("/api/health", platformOrigin).toString(),
-      "realtime.health": new URL("/health", realtimeOrigin).toString(),
-      "hosted.release": absoluteUrl(env.AIRJAM_SYNTHETIC_HOSTED_RELEASE_URL),
-      "worker.ready": workerOrigin
-        ? new URL("/ready", workerOrigin).toString()
-        : null,
-      "browser_worker.health": browserWorkerOrigin
-        ? new URL("/health", browserWorkerOrigin).toString()
-        : null,
+      "platform.home": urlFromOrigin(platformOrigin, "/"),
+      "platform.docs": urlFromOrigin(platformOrigin, "/docs"),
+      "platform.arcade": urlFromOrigin(platformOrigin, "/arcade"),
+      "platform.health": urlFromOrigin(platformOrigin, "/api/health"),
+      "platform.readiness": urlFromOrigin(platformOrigin, "/api/readiness"),
+      "realtime.health": urlFromOrigin(realtimeOrigin, "/health"),
+      "hosted.release": hostedReleaseUrl,
+      "worker.ready": urlFromOrigin(workerOrigin, "/ready"),
+      "browser_worker.health": urlFromOrigin(browserWorkerOrigin, "/health"),
       "realtime.room_controller": realtimeOrigin,
       "realtime.semantic_action": realtimeOrigin,
     }),
-    realtimeOrigin,
-    requestOrigin: platformOrigin,
     appId:
       env.AIRJAM_SYNTHETIC_APP_ID?.trim() || platform.appId?.trim() || null,
   };
@@ -185,6 +205,22 @@ const timed = async <T>(operation: () => Promise<T>) => {
   }
 };
 
+const unconfiguredTargetObservation = (
+  step: OperationalSyntheticCheckV1["steps"][number],
+  targetKey = step.targetKey,
+): OperationalSyntheticRunV1["observations"][number] => ({
+  stepId: step.stepId,
+  status: "error",
+  latencyMilliseconds: 0,
+  failure: createStructuredOperationalFailure({
+    code: "synthetic.target_unconfigured",
+    failureClass: "invalid_input",
+    summary: "A required synthetic target is not configured.",
+    retryable: false,
+    details: { targetKey },
+  }),
+});
+
 const executeHttpStep = async ({
   step,
   target,
@@ -196,20 +232,7 @@ const executeHttpStep = async ({
   timeoutMilliseconds: number;
   fetchImpl: typeof fetch;
 }): Promise<OperationalSyntheticRunV1["observations"][number]> => {
-  if (!target) {
-    return {
-      stepId: step.stepId,
-      status: "error",
-      latencyMilliseconds: 0,
-      failure: createStructuredOperationalFailure({
-        code: "synthetic.target_unconfigured",
-        failureClass: "invalid_input",
-        summary: "A required synthetic target is not configured.",
-        retryable: false,
-        details: { targetKey: step.targetKey },
-      }),
-    };
-  }
+  if (!target) return unconfiguredTargetObservation(step);
   const result = await timed(async () => {
     const response = await fetchImpl(target, {
       method: "GET",
@@ -350,14 +373,21 @@ const waitForStateSync = (
 const executeAirJamSessionStep = async ({
   check,
   step,
+  target,
   config,
   socketFactory,
 }: {
   check: OperationalSyntheticCheckV1;
   step: OperationalSyntheticCheckV1["steps"][number];
+  target: string | null;
   config: OperationalSyntheticRuntimeConfig;
   socketFactory: typeof io;
 }): Promise<OperationalSyntheticRunV1["observations"][number]> => {
+  if (!target) return unconfiguredTargetObservation(step);
+  const requestOrigin = config.targets["platform.home"] ?? null;
+  if (!requestOrigin) {
+    return unconfiguredTargetObservation(step, "platform.home");
+  }
   if (!config.appId) {
     return {
       stepId: step.stepId,
@@ -377,14 +407,11 @@ const executeAirJamSessionStep = async ({
       transports: ["websocket"],
       forceNew: true,
       reconnection: false,
-      extraHeaders: { origin: config.requestOrigin },
+      extraHeaders: { origin: new URL(requestOrigin).origin },
     };
-    const host = socketFactory(
-      config.realtimeOrigin,
-      socketOptions,
-    ) as AirJamSyntheticSocket;
+    const host = socketFactory(target, socketOptions) as AirJamSyntheticSocket;
     const controller = socketFactory(
-      config.realtimeOrigin,
+      target,
       socketOptions,
     ) as AirJamSyntheticSocket;
     try {
@@ -532,12 +559,19 @@ export const executeOperationalSyntheticCheck = async ({
   const executionStartedAt = performance.now();
   const observations = [];
   for (const step of check.steps) {
+    const target = config.targets[step.targetKey] ?? null;
     observations.push(
       check.executor === "airjam_semantic"
-        ? await executeAirJamSessionStep({ check, step, config, socketFactory })
+        ? await executeAirJamSessionStep({
+            check,
+            step,
+            target,
+            config,
+            socketFactory,
+          })
         : await executeHttpStep({
             step,
-            target: config.targets[step.targetKey] ?? null,
+            target,
             timeoutMilliseconds: check.timeoutMilliseconds,
             fetchImpl,
           }),

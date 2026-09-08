@@ -8,12 +8,8 @@
 # - `builder` runs `next build` with the deps already installed.
 # - `runtime` ships only the Next.js standalone output — no source, no
 #   dev deps, no pnpm — for a small image and fast Railway cold start.
-#
-# BuildKit cache mounts persist the pnpm content-addressed store across
-# builds even when the install layer is invalidated, so package downloads
-# don't repeat from the registry.
 
-ARG NODE_IMAGE=node:20-bookworm-slim
+ARG NODE_IMAGE=node:22-bookworm-slim
 
 # ============================================================================
 # Stage 1: deps — install workspace dependencies
@@ -53,11 +49,10 @@ COPY games/last-band-standing/package.json      ./games/last-band-standing/
 # (~12K) — copy the whole dir, not just the package.json.
 COPY apps/platform/loader ./apps/platform/loader
 
-# Cache mount id must be `s/<railway-service-id>-<suffix>` so Railway's
-# Metal builder accepts it. The id is hardcoded per service (env vars
-# are not allowed in cache mount ids). Service id below = platform.
-RUN --mount=type=cache,id=s/5966dcb6-88cb-49d6-a1fa-60ca78c533ac-pnpm,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+# The manifest-only dependency layer is the portable cache boundary. Do not use
+# Railway's service-scoped cache mount here: this Dockerfile intentionally builds
+# both the platform and operational-worker services.
+RUN pnpm install --frozen-lockfile
 
 # ============================================================================
 # Stage 2: builder — compile the Next.js app

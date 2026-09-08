@@ -447,8 +447,6 @@ describeWithPostgres("operational reliability PostgreSQL invariants", () => {
         "platform.home": "https://platform.example.test/",
         "platform.docs": "https://platform.example.test/docs",
       },
-      realtimeOrigin: "https://realtime.example.test",
-      requestOrigin: "https://platform.example.test",
       appId: "app:synthetic-execution-fence-test",
     };
     const fetchImpl = (async () => {
@@ -488,6 +486,7 @@ describeWithPostgres("operational reliability PostgreSQL invariants", () => {
         "platform.docs": "https://platform.example.test/docs",
         "platform.arcade": "https://platform.example.test/arcade",
         "platform.health": "https://platform.example.test/api/health",
+        "platform.readiness": "https://platform.example.test/api/readiness",
         "realtime.health": "https://realtime.example.test/health",
         "hosted.release": "https://release.example.test/",
         "worker.ready": "https://worker.example.test/ready",
@@ -495,13 +494,11 @@ describeWithPostgres("operational reliability PostgreSQL invariants", () => {
         "realtime.room_controller": "https://realtime.example.test/",
         "realtime.semantic_action": "https://realtime.example.test/",
       },
-      realtimeOrigin: "https://realtime.example.test",
-      requestOrigin: "https://platform.example.test",
       appId: "app:synthetic-postgres-proof",
     };
     const fetchImpl = (async (input: string | URL | Request) => {
       const url = input.toString();
-      if (url.includes("/api/health")) {
+      if (url.includes("/api/readiness")) {
         return Response.json({
           ok: true,
           boundaries: {
@@ -510,6 +507,9 @@ describeWithPostgres("operational reliability PostgreSQL invariants", () => {
             releaseModeration: { required: true, status: "ready" },
           },
         });
+      }
+      if (url.includes("/api/health")) {
+        return Response.json({ ok: true });
       }
       if (url.includes("/health") || url.includes("/ready")) {
         return Response.json({ ok: true });

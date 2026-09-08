@@ -41,6 +41,7 @@ const realtimeAdmissionService: RealtimeAdmissionService = {
   getStatus: () => ({
     contractVersion: REALTIME_ADMISSION_POLICY.contractVersion,
     authority: "database",
+    budgetRequirement: "required",
     instanceId: "owned-database-test",
     acceptingNewWork: true,
     draining: false,

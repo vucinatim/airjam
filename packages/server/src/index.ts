@@ -56,6 +56,7 @@ const projectPublicRealtimeAdmissionStatus = (
 ) => ({
   contractVersion: status.contractVersion,
   authority: status.authority,
+  budgetRequirement: status.budgetRequirement,
   acceptingNewWork: status.acceptingNewWork,
   draining: status.draining,
   terminalAuthorityLost: status.terminalAuthorityLost,
@@ -163,12 +164,14 @@ export const createAirJamServer = (
             process.env.RAILWAY_REPLICA_ID?.trim() || "realtime",
             crypto.randomUUID(),
           ].join(":"),
+          budgetRequirement: envConfig.operationalBudgetRequirement,
         })
       : envConfig.operationalEnvironment === "production" ||
           envConfig.operationalEnvironment === "preview"
         ? createUnavailableRealtimeAdmissionService({
             reason:
               "DATABASE_URL is required for hosted realtime admission authority.",
+            budgetRequirement: envConfig.operationalBudgetRequirement,
           })
         : createLocalRealtimeAdmissionService());
   const operationalEventPublisher =

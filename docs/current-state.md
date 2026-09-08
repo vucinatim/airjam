@@ -567,7 +567,9 @@ In short:
    verified against the exact Railway production deployment
 2. finish invisible realtime admission in `G3-02`, then provision and observe
    the operational worker and the now-implemented storage retention lifecycle
-   safely
+   safely; migrate the four Railway application services and PostgreSQL to one
+   reviewed `.railway/railway.ts` project graph before treating deployment
+   configuration as release-ready
 3. provision an isolated ephemeral Railway/R2 rehearsal profile and unblock the
    Codex plus Claude Desktop golden-path proofs
 4. keep the completed recovery contract stable and finish supply-chain trust as

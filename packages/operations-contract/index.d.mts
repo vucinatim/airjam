@@ -158,6 +158,7 @@ export declare const operationsContractSchemaNames: readonly [
 ];
 
 export type DeploymentEnvironment = (typeof deploymentEnvironments)[number];
+export type OperationalBudgetRequirement = "required" | "not_applicable";
 export type OperationalService = (typeof operationalServices)[number];
 export type OperationalEventAuthority =
   (typeof operationalEventAuthorities)[number];
@@ -559,6 +560,9 @@ export declare const areOperationalEventEnvelopesIdempotentlyEquivalent: (
 export declare const resolveDeploymentEnvironment: (
   env?: Record<string, string | undefined>,
 ) => DeploymentEnvironment;
+export declare const resolveOperationalBudgetRequirement: (
+  env?: Record<string, string | undefined>,
+) => OperationalBudgetRequirement;
 export declare const operationalCorrelationSchemaV1: ZodType<OperationalCorrelationV1>;
 export declare const operationalActorSchemaV1: ZodType<OperationalActorV1>;
 export declare const operationalEvidenceSchemaV1: ZodType<OperationalEvidenceV1>;

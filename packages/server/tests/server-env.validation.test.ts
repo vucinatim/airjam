@@ -32,6 +32,7 @@ describe("loadServerEnv", () => {
     expect(config.authMode).toBe("disabled");
     expect(config.proxyHeaderTrustMode).toBe("auto");
     expect(config.remoteDatabaseBlocked).toBe(false);
+    expect(config.operationalBudgetRequirement).toBe("not_applicable");
   });
 
   it("validates the hosted-runtime report rate limit", () => {
@@ -106,6 +107,7 @@ describe("loadServerEnv", () => {
     });
 
     expect(config.allowedOrigins).toBe("*");
+    expect(config.operationalBudgetRequirement).toBe("not_applicable");
   });
 
   it("respects AIR_JAM_ALLOWED_ORIGINS on Railway production", () => {
@@ -116,6 +118,7 @@ describe("loadServerEnv", () => {
     });
 
     expect(config.allowedOrigins).toEqual(["https://airjam.io"]);
+    expect(config.operationalBudgetRequirement).toBe("required");
   });
 
   it("preserves leading-subdomain origin patterns in production", () => {

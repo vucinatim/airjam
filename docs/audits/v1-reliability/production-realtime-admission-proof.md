@@ -106,13 +106,18 @@ The failure policy protects active play and cost at the same time:
 7. a candidate proves fresh database and budget authority before it drains an
    incumbent; if the activated candidate disappears, the incumbent recovers
    admission once no live successor remains
+8. deployment-derived previews keep production budget evidence explicitly out
+   of scope while retaining PostgreSQL lane and hard-capacity enforcement; they
+   do not collect, copy, or fabricate production budget evidence
 
 The realtime `/health` projection remains a process-liveness response and
 includes only bounded admission authority, accepting-work, drain, heartbeat,
 pending-reconciliation, terminal-loss, and `hasError` state. It deliberately
 does not expose raw error messages, instance identity, or policy internals.
 `/ready` is the traffic-readiness boundary and returns `503` when hosted
-admission authority is unavailable or the instance is draining.
+admission authority is unavailable or the instance is draining. Both endpoints
+also expose whether production budget authority is `required` or
+`not_applicable`.
 
 The 1.0 deployment contract remains exactly one realtime replica. PostgreSQL
 provides shared admission and lease authority, but gameplay and room placement

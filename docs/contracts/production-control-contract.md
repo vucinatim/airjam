@@ -149,6 +149,14 @@ project-token identity and requires an exact match with both
 account token. Local and preview workers default to explicit collection-disabled
 status and cannot claim production budget authority.
 
+Realtime admission makes that boundary explicit. Production requires fresh
+provider-backed budget evidence. A deployment-derived preview marks the
+production budget requirement as `not_applicable`; it still requires its own
+PostgreSQL lane, instance, room, controller, and hard-capacity authority. This
+keeps previews usable without copying production usage credentials or
+fabricating provider evidence, while `/health` and `/ready` expose the effective
+requirement for agent inspection.
+
 The ordinary threshold sequence is `$25`, `$50`, `$75`, `$90`, and `$100`.
 The one-cycle 1.0 launch sequence is `$50`, `$75`, `$100`, `$135`, and `$150`.
 The launch profile is inactive until the exact provider cycle start is approved

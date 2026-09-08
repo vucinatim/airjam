@@ -8,8 +8,6 @@ import type { OperationalSyntheticRuntimeConfig } from "./operational-synthetic-
 const config: OperationalSyntheticRuntimeConfig = {
   environment: "test",
   targets: {},
-  realtimeOrigin: "https://realtime.example.test",
-  requestOrigin: "https://platform.example.test",
   appId: "app:synthetic-scheduler-test",
 };
 

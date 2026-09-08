@@ -130,7 +130,7 @@ export const OPERATIONAL_SYNTHETIC_CHECKS = Object.freeze([
     steps: [
       {
         stepId: "release-boundaries",
-        targetKey: "platform.health",
+        targetKey: "platform.readiness",
         assertion: "dependency_ready",
       },
       {

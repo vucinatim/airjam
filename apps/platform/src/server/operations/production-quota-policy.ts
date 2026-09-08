@@ -10,6 +10,7 @@ import {
   type OperationalQuotaUnit,
   type OperationalQuotaWindow,
 } from "@air-jam/database-contract";
+import type { OperationalBudgetRequirement } from "@air-jam/operations-contract";
 import type { OperationalBudgetStatus } from "./production-budget-policy";
 
 export const PRODUCTION_QUOTA_CONTRACT_VERSION = 1 as const;
@@ -176,6 +177,7 @@ export const decideOperationalQuotaAdmission = ({
   requestedAmount,
   control,
   budget,
+  budgetRequirement,
   decisionId = crypto.randomUUID(),
 }: {
   lane: OperationalLane;
@@ -183,6 +185,7 @@ export const decideOperationalQuotaAdmission = ({
   requestedAmount: number;
   control: OperationalLaneControlSnapshot | null;
   budget: OperationalBudgetStatus;
+  budgetRequirement: OperationalBudgetRequirement;
   decisionId?: string;
 }): OperationalQuotaAdmissionDecision => {
   if (!Number.isSafeInteger(requestedAmount) || requestedAmount < 0) {
@@ -214,6 +217,7 @@ export const decideOperationalQuotaAdmission = ({
       lane,
       control,
       budget,
+      budgetRequirement,
       quota: {
         authorityAvailable: usage.authorityStatus === "available",
         current: usage.current,

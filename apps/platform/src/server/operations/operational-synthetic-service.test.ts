@@ -1,9 +1,13 @@
 import type { Socket } from "socket.io-client";
-import { describe, expect, it } from "vitest";
-import { getOperationalSyntheticCheck } from "./operational-reliability-policy";
+import { describe, expect, it, vi } from "vitest";
+import {
+  getOperationalSyntheticCheck,
+  OPERATIONAL_SYNTHETIC_CHECKS,
+} from "./operational-reliability-policy";
 import {
   anchorOperationalSyntheticRunToDatabaseTime,
   executeOperationalSyntheticCheck,
+  resolveOperationalSyntheticRuntimeConfig,
   type OperationalSyntheticRuntimeConfig,
 } from "./operational-synthetic-service";
 
@@ -14,6 +18,7 @@ const config: OperationalSyntheticRuntimeConfig = {
     "platform.docs": "https://platform.example.test/docs",
     "platform.arcade": "https://platform.example.test/arcade",
     "platform.health": "https://platform.example.test/api/health",
+    "platform.readiness": "https://platform.example.test/api/readiness",
     "realtime.health": "https://realtime.example.test/health",
     "hosted.release": "https://release.example.test/",
     "worker.ready": "https://worker.example.test/ready",
@@ -21,8 +26,6 @@ const config: OperationalSyntheticRuntimeConfig = {
     "realtime.room_controller": "https://realtime.example.test/",
     "realtime.semantic_action": "https://realtime.example.test/",
   },
-  realtimeOrigin: "https://realtime.example.test",
-  requestOrigin: "https://platform.example.test",
   appId: "app:synthetic-test",
 };
 
@@ -44,6 +47,83 @@ const execute = (
   });
 
 describe("operational synthetic execution", () => {
+  it("uses Railway preview authority and environment-scoped sibling targets", () => {
+    const runtime = resolveOperationalSyntheticRuntimeConfig({
+      RAILWAY_ENVIRONMENT_NAME: "air-jam-pr-109",
+      RAILWAY_PUBLIC_DOMAIN:
+        "air-jam-platform-worker-air-jam-pr-109.up.railway.app",
+      RAILWAY_SERVICE_AIR_JAM_PLATFORM_URL:
+        "air-jam-platform-air-jam-pr-109.up.railway.app",
+      RAILWAY_SERVICE_AIR_JAM_SERVER_URL:
+        "air-jam-server-air-jam-pr-109.up.railway.app",
+      RAILWAY_SERVICE_AIR_JAM_PLATFORM_WORKER_URL:
+        "air-jam-platform-worker-air-jam-pr-109.up.railway.app",
+      RAILWAY_SERVICE_AIR_JAM_RELEASE_BROWSER_WORKER_URL:
+        "air-jam-release-browser-worker-air-jam-pr-109.up.railway.app",
+      AIRJAM_OPERATIONAL_ENVIRONMENT: "production",
+      NEXT_PUBLIC_APP_URL: "https://airjam.io",
+      NEXT_PUBLIC_AIR_JAM_SERVER_URL: "https://api.airjam.io",
+      AIRJAM_SYNTHETIC_WORKER_ORIGIN:
+        "https://air-jam-operations-worker-production.up.railway.app",
+      AIRJAM_SYNTHETIC_BROWSER_WORKER_ORIGIN:
+        "https://air-jam-release-browser-worker-production.up.railway.app",
+    });
+
+    expect(runtime).toMatchObject({
+      environment: "preview",
+      targets: {
+        "platform.readiness":
+          "https://air-jam-platform-air-jam-pr-109.up.railway.app/api/readiness",
+        "realtime.health":
+          "https://air-jam-server-air-jam-pr-109.up.railway.app/health",
+        "worker.ready":
+          "https://air-jam-platform-worker-air-jam-pr-109.up.railway.app/ready",
+        "browser_worker.health":
+          "https://air-jam-release-browser-worker-air-jam-pr-109.up.railway.app/health",
+      },
+    });
+  });
+
+  it("fails closed before connecting when a Railway preview sibling is missing", async () => {
+    const runtime = resolveOperationalSyntheticRuntimeConfig({
+      RAILWAY_ENVIRONMENT_NAME: "air-jam-pr-109",
+      RAILWAY_PUBLIC_DOMAIN:
+        "air-jam-platform-worker-air-jam-pr-109.up.railway.app",
+      NEXT_PUBLIC_APP_URL: "https://airjam.io",
+      NEXT_PUBLIC_AIR_JAM_SERVER_URL: "https://api.airjam.io",
+      AIRJAM_SYNTHETIC_HOSTED_RELEASE_URL: "https://games.airjam.dev/release",
+    });
+
+    expect(runtime.targets).toMatchObject({
+      "platform.home": null,
+      "realtime.health": null,
+      "realtime.room_controller": null,
+      "hosted.release": null,
+    });
+
+    const socketFactory = vi.fn();
+    const run = await execute("room-controller", {
+      runtimeConfig: runtime,
+      socketFactory: socketFactory as never,
+    });
+    expect(socketFactory).not.toHaveBeenCalled();
+    expect(run.observations[0]).toMatchObject({
+      status: "error",
+      failure: {
+        code: "synthetic.target_unconfigured",
+        details: { targetKey: "realtime.room_controller" },
+      },
+    });
+  });
+
+  it("declares a runtime target for every synthetic policy step", () => {
+    for (const check of OPERATIONAL_SYNTHETIC_CHECKS) {
+      for (const step of check.steps) {
+        expect(step.targetKey in config.targets).toBe(true);
+      }
+    }
+  });
+
   it("anchors persisted chronology to database time without changing measured duration", async () => {
     const run = await execute("landing-docs", {
       fetchImpl: (async () => new Response("ok")) as typeof fetch,
@@ -67,9 +147,11 @@ describe("operational synthetic execution", () => {
   });
 
   it("evaluates HTTP, JSON readiness, hosted HTML, and missing targets safely", async () => {
+    const requestedUrls: string[] = [];
     const healthyFetch = async (input: string | URL | Request) => {
       const url = input.toString();
-      if (url.includes("/api/health")) {
+      requestedUrls.push(url);
+      if (url.includes("/api/readiness")) {
         return Response.json({
           ok: true,
           boundaries: {
@@ -77,6 +159,9 @@ describe("operational synthetic execution", () => {
             optionalProvider: { required: false, status: "unconfigured" },
           },
         });
+      }
+      if (url.includes("/api/health")) {
+        return Response.json({ ok: true });
       }
       if (url.includes("/health") || url.includes("/ready")) {
         return Response.json({ ok: true });
@@ -102,10 +187,19 @@ describe("operational synthetic execution", () => {
       }),
     ).resolves.toMatchObject({ status: "passed" });
     await expect(
+      execute("platform-realtime-health", {
+        fetchImpl: healthyFetch as typeof fetch,
+      }),
+    ).resolves.toMatchObject({ status: "passed" });
+    await expect(
       execute("release-dependencies", {
         fetchImpl: healthyFetch as typeof fetch,
       }),
     ).resolves.toMatchObject({ status: "passed" });
+    expect(requestedUrls).toContain("https://platform.example.test/api/health");
+    expect(requestedUrls).toContain(
+      "https://platform.example.test/api/readiness",
+    );
 
     const missingRelease = await execute("arcade-hosted-release", {
       runtimeConfig: {
@@ -143,7 +237,7 @@ describe("operational synthetic execution", () => {
       failure: {
         code: "synthetic.assertion_failed",
         details: {
-          targetKey: "platform.health",
+          targetKey: "platform.readiness",
           assertion: "dependency_ready",
           httpStatus: 200,
         },

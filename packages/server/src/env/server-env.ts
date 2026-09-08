@@ -2,6 +2,8 @@ import { validateEnv } from "@air-jam/env";
 import {
   deploymentEnvironments,
   resolveDeploymentEnvironment,
+  resolveOperationalBudgetRequirement,
+  type OperationalBudgetRequirement,
 } from "@air-jam/operations-contract";
 import { z } from "zod";
 import {
@@ -15,6 +17,7 @@ export type ProxyHeaderTrustMode = "auto" | "enabled" | "disabled";
 export interface ServerEnvConfig {
   nodeEnv: string;
   operationalEnvironment: "production" | "preview" | "development" | "test";
+  operationalBudgetRequirement: OperationalBudgetRequirement;
   port: number;
   rateLimitWindowMs: number;
   hostRegistrationRateLimitMax: number;
@@ -241,9 +244,10 @@ export const loadServerEnv = (
   // CORS to "*" on previews so socket.io can connect. Production stays
   // strict.
   const railwayEnvironmentName = env.RAILWAY_ENVIRONMENT_NAME?.trim();
-  const isRailwayPreviewEnvironment =
-    Boolean(railwayEnvironmentName) && railwayEnvironmentName !== "production";
   const operationalEnvironment = resolveDeploymentEnvironment(env);
+  const isRailwayPreviewEnvironment =
+    Boolean(railwayEnvironmentName) && operationalEnvironment === "preview";
+  const operationalBudgetRequirement = resolveOperationalBudgetRequirement(env);
 
   const authMode = resolveAuthMode({
     configuredAuthMode: parsed.AIR_JAM_AUTH_MODE as AuthMode | undefined,
@@ -258,6 +262,7 @@ export const loadServerEnv = (
   return {
     nodeEnv,
     operationalEnvironment,
+    operationalBudgetRequirement,
     port: parsed.PORT,
     rateLimitWindowMs: parsed.AIR_JAM_RATE_LIMIT_WINDOW_MS,
     hostRegistrationRateLimitMax:
