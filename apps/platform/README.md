@@ -191,6 +191,8 @@ Minimum additional env needed for the hosted release lane:
 3. `AIRJAM_RELEASES_R2_ACCOUNT_ID` or `AIRJAM_RELEASES_R2_ENDPOINT`
 4. `AIRJAM_RELEASES_R2_ACCESS_KEY_ID`
 5. `AIRJAM_RELEASES_R2_SECRET_ACCESS_KEY`
+6. optional `AIRJAM_RELEASES_R2_SESSION_TOKEN` for short-lived, bucket-scoped
+   preview credentials
 
 `AIRJAM_RELEASES_PUBLIC_ORIGIN` must be an absolute origin on a separate
 cookie site from the authenticated platform. Air Jam production uses

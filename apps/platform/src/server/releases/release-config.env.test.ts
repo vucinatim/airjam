@@ -53,11 +53,13 @@ describe("release env contracts", () => {
     process.env.AIRJAM_RELEASES_R2_ACCOUNT_ID = "account-1";
     process.env.AIRJAM_RELEASES_R2_ACCESS_KEY_ID = "access";
     process.env.AIRJAM_RELEASES_R2_SECRET_ACCESS_KEY = "secret";
+    process.env.AIRJAM_RELEASES_R2_SESSION_TOKEN = "session";
 
     const config = getReleaseStorageConfig();
 
     expect(config.bucket).toBe("bucket");
     expect(config.endpoint).toBe("https://account-1.r2.cloudflarestorage.com");
+    expect(config.sessionToken).toBe("session");
     expect(config.uploadUrlTtlSeconds).toBe(900);
   });
 

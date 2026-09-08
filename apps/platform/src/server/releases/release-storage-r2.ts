@@ -62,6 +62,7 @@ const createR2Client = (): S3Client => {
     credentials: {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,
+      ...(config.sessionToken ? { sessionToken: config.sessionToken } : {}),
     },
   });
 };
