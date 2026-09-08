@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { readPlatformMigrationCatalog } from "../../platform/lib/platform-migration-catalog.mjs";
+import { inspectPlatformMigrationDeploymentProvenance } from "../../platform/lib/platform-migration-deployment-provenance.mjs";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -48,6 +49,69 @@ test("platform migration CLI exposes one inspect-plan-apply-verify lifecycle", (
   ]) {
     assert.match(applyHelp, new RegExp(option));
   }
+
+  const verifyHelp = execFileSync(
+    process.execPath,
+    [
+      "scripts/repo/cli.mjs",
+      "platform",
+      "database",
+      "migration",
+      "verify",
+      "--help",
+    ],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  assert.match(verifyHelp, /--deployed-revision/u);
+});
+
+test("deployment provenance accepts an exact reviewed tree wrapped by a merge commit", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "airjam-migration-git-"));
+  const git = (...args) =>
+    execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+  git("init", "--quiet", "--initial-branch=main");
+  git("config", "user.name", "Air Jam Test");
+  git("config", "user.email", "test@airjam.invalid");
+  fs.writeFileSync(path.join(root, "contract.txt"), "base\n");
+  git("add", "contract.txt");
+  git("commit", "--quiet", "-m", "base");
+  git("switch", "--quiet", "-c", "reviewed");
+  fs.writeFileSync(path.join(root, "contract.txt"), "reviewed\n");
+  git("add", "contract.txt");
+  git("commit", "--quiet", "-m", "reviewed");
+  const sourceCommit = git("rev-parse", "HEAD");
+  git("switch", "--quiet", "main");
+  git("merge", "--quiet", "--no-ff", "reviewed", "-m", "merge reviewed");
+  const deployedCommit = git("rev-parse", "HEAD");
+
+  const accepted = inspectPlatformMigrationDeploymentProvenance({
+    repoRoot: root,
+    sourceCommit,
+    deployedCommit,
+  });
+  assert.equal(accepted.sourceIsAncestor, true);
+  assert.equal(accepted.treesMatch, true);
+
+  fs.writeFileSync(path.join(root, "unreviewed.txt"), "later\n");
+  git("add", "unreviewed.txt");
+  git("commit", "--quiet", "-m", "later change");
+  const changedCommit = git("rev-parse", "HEAD");
+  const rejected = inspectPlatformMigrationDeploymentProvenance({
+    repoRoot: root,
+    sourceCommit,
+    deployedCommit: changedCommit,
+  });
+  assert.equal(rejected.sourceIsAncestor, true);
+  assert.equal(rejected.treesMatch, false);
+  assert.throws(
+    () =>
+      inspectPlatformMigrationDeploymentProvenance({
+        repoRoot: root,
+        sourceCommit: "HEAD",
+        deployedCommit,
+      }),
+    /full lowercase Git commit SHA/u,
+  );
 });
 
 test("new migrations require explicit mode and verification policy", () => {

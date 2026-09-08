@@ -1987,6 +1987,10 @@ export const registerPlatformCommands = (program) => {
         "--platform-url <url>",
         "Deployed platform origin for readiness proof",
       )
+      .option(
+        "--deployed-revision <commit>",
+        "Exact deployed commit whose tree matches the reviewed source",
+      )
       .option("--json", "Print the stable machine-readable contract"),
   ).action(async (options) => {
     await runPlatformOperator({
@@ -1999,6 +2003,7 @@ export const registerPlatformCommands = (program) => {
         actor: options.actor,
         reason: options.reason,
         platformUrl: options.platformUrl,
+        deployedRevision: options.deployedRevision,
         json: Boolean(options.json),
       },
       options,

@@ -42,6 +42,7 @@ import {
   digestCanonicalJson,
   readPlatformMigrationCatalog,
 } from "../../../scripts/platform/lib/platform-migration-catalog.mjs";
+import { inspectPlatformMigrationDeploymentProvenance } from "../../../scripts/platform/lib/platform-migration-deployment-provenance.mjs";
 import {
   createPlatformDatabaseDump,
   platformBackupContractVersion,
@@ -73,6 +74,7 @@ type Operation = {
   reason?: string;
   idempotencyKey?: string;
   platformUrl?: string;
+  deployedRevision?: string;
   apply?: boolean;
   drainTimeoutSeconds?: number;
 };
@@ -459,8 +461,16 @@ const assertPlanMatches = async ({
   if (plan.source.catalogDigest !== catalog.digest) {
     throw new Error("Migration catalog changed after the plan was created.");
   }
-  if (sourceIdentity().commit !== plan.source.commit) {
-    throw new Error("Source commit changed after the plan was created.");
+  const currentSource = sourceIdentity();
+  const provenance = inspectPlatformMigrationDeploymentProvenance({
+    repoRoot,
+    sourceCommit: plan.source.commit,
+    deployedCommit: currentSource.commit,
+  });
+  if (!provenance.sourceIsAncestor || !provenance.treesMatch) {
+    throw new Error(
+      "Current source does not contain the planned commit with an identical tree.",
+    );
   }
   if (inspection.target.fingerprint !== plan.target.fingerprint) {
     throw new Error("Database target fingerprint does not match the plan.");
@@ -673,7 +683,7 @@ const applyPlanWithLockHeld = async ({
       run,
       inspection,
       checks,
-      next: "Deploy the exact planned commit, then run migration verify.",
+      next: "Deploy the reviewed source tree, then verify its exact production revision.",
     };
   }
   const paused = await pauseLanes({ plan, actor, reason, idempotencyKey });
@@ -701,7 +711,7 @@ const applyPlanWithLockHeld = async ({
       run,
       inspection,
       checks,
-      next: "Deploy the exact planned commit, then run migration verify.",
+      next: "Deploy the reviewed source tree, then verify its exact production revision.",
     };
   }
   const tableExisted = await migrationRunExists(client);
@@ -774,7 +784,7 @@ const applyPlanWithLockHeld = async ({
     run,
     inspection: after,
     checks,
-    next: "Deploy the exact planned commit, then run migration verify.",
+    next: "Deploy the reviewed source tree, then verify its exact production revision.",
   };
 };
 
@@ -878,9 +888,31 @@ const verifyPlanWithLockHeld = async ({
   }
   const checks = await verifyChecks(client, plan.verificationChecks);
   const platformUrl = operation.platformUrl?.replace(/\/$/u, "") ?? null;
+  const deployedRevision = operation.deployedRevision?.trim() ?? null;
   let deployment: Record<string, unknown> | null = null;
+  if (Boolean(platformUrl) !== Boolean(deployedRevision)) {
+    throw new Error(
+      "--platform-url and --deployed-revision must be provided together.",
+    );
+  }
   if (plan.authority === "production" && !platformUrl) {
-    throw new Error("Production verification requires --platform-url.");
+    throw new Error(
+      "Production verification requires --platform-url and --deployed-revision.",
+    );
+  }
+  let provenance: ReturnType<
+    typeof inspectPlatformMigrationDeploymentProvenance
+  > | null = null;
+  if (deployedRevision) {
+    provenance = inspectPlatformMigrationDeploymentProvenance({
+      repoRoot,
+      sourceCommit: plan.source.commit,
+      deployedCommit: deployedRevision,
+    });
+    checks.push({
+      check: "deployment:reviewed-source-tree",
+      passed: provenance.sourceIsAncestor && provenance.treesMatch,
+    });
   }
   if (platformUrl) {
     try {
@@ -894,7 +926,7 @@ const verifyPlanWithLockHeld = async ({
         passed:
           response.ok &&
           deployment.ok === true &&
-          revision === plan.source.commit,
+          revision === deployedRevision,
       });
     } catch (error) {
       deployment = {
@@ -915,6 +947,7 @@ const verifyPlanWithLockHeld = async ({
     inspection,
     checks,
     deployment,
+    provenance,
   };
   if (!passed) {
     await markPlatformSchemaMigrationVerificationFailed({
