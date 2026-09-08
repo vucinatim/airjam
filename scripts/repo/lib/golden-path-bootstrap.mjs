@@ -778,6 +778,7 @@ export const runGoldenPathBootstrap = async ({
       label: "Candidate MCP server",
       requiredToolNames: [
         "airjam.inspect_project",
+        "airjam.evaluate",
         "airjam.open_game_session",
         "airjam.read_game_session",
         "airjam.invoke_game_session_action",

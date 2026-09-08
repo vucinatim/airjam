@@ -10,10 +10,8 @@ import {
   loadEnvFile,
   waitForPort,
 } from "./dev-utils.mjs";
-import {
-  loadCreateAirJamRuntimeEnv,
-  resolveLocalBackendOrigin,
-} from "./runtime-env.mjs";
+import { resolveLocalBackendOrigin } from "./local-network.mjs";
+import { loadCreateAirJamRuntimeEnv } from "./runtime-env.mjs";
 import {
   buildStandaloneGameTopology,
   serializeResolvedTopology,

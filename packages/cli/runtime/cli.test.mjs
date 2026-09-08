@@ -56,6 +56,14 @@ test("airjam exposes dev help", () => {
   assert.match(output, /parallel agents/);
 });
 
+test("airjam exposes the complete evaluation contract", () => {
+  const output = runCliHelp("evaluate");
+
+  assert.match(output, /complete game evaluation/i);
+  assert.match(output, /typecheck, lint, tests, and production build/i);
+  assert.match(output, /--dir <path>/);
+});
+
 test("airjam exposes secure:init help", () => {
   const output = runCliHelp("secure:init");
 

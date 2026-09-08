@@ -1,10 +1,8 @@
 import { EnvValidationError } from "@air-jam/env";
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  loadCreateAirJamRuntimeEnv,
-  resolveLocalBackendOrigin,
-} from "./runtime-env.mjs";
+import { resolveLocalBackendOrigin } from "./local-network.mjs";
+import { loadCreateAirJamRuntimeEnv } from "./runtime-env.mjs";
 
 test("loadCreateAirJamRuntimeEnv parses defaults", () => {
   const runtimeEnv = loadCreateAirJamRuntimeEnv({

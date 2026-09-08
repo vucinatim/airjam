@@ -153,6 +153,7 @@ describe("createAirJamMcpServer", () => {
       "airjam.inspect_game_agent_contract",
       "airjam.read_logs",
       "airjam.run_quality_gate",
+      "airjam.evaluate",
       "airjam.release_list",
       "airjam.release_inspect",
       "airjam.release_upload",
@@ -209,6 +210,7 @@ describe("createAirJamMcpServer", () => {
       "airjam.release_submit",
     );
     expect(listed.tools.map((tool) => tool.name)).toContain("airjam.start_dev");
+    expect(listed.tools.map((tool) => tool.name)).toContain("airjam.evaluate");
     expect(listed.tools.map((tool) => tool.name)).toContain(
       "airjam.reset_local",
     );

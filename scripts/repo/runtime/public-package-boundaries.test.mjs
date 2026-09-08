@@ -29,6 +29,7 @@ test("public package ownership has one canonical project CLI", () => {
     "./vite-config",
   ]);
   assert.ok(cli.files.includes("template-assets"));
+  assert.ok(cli.files.includes("runtime/local-network.mjs"));
 
   assert.deepEqual(createAirJam.bin, {
     "create-airjam": "./dist/index.js",
@@ -43,6 +44,27 @@ test("public package ownership has one canonical project CLI", () => {
   assert.equal(server.exports, undefined);
   assert.equal(server.main, undefined);
   assert.equal(server.module, undefined);
+});
+
+test("shipped CLI runtime modules close over shipped relative imports", () => {
+  const cli = readJson("packages/cli/package.json");
+  const shippedFiles = new Set(cli.files);
+  const runtimeEntries = [...shippedFiles].filter(
+    (entry) => entry.startsWith("runtime/") && entry.endsWith(".mjs"),
+  );
+
+  for (const entry of runtimeEntries) {
+    const source = fs.readFileSync(path.join(repoRoot, "packages/cli", entry), "utf8");
+    for (const match of source.matchAll(/\bfrom\s+["'](\.\/[^"']+)["']/gu)) {
+      const importedPath = path.posix.normalize(
+        path.posix.join(path.posix.dirname(entry), match[1]),
+      );
+      assert.ok(
+        shippedFiles.has(importedPath),
+        `${entry} imports ${importedPath}, but the CLI package does not ship it`,
+      );
+    }
+  }
 });
 
 test("obsolete project CLI implementations are fully removed", () => {

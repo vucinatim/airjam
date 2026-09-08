@@ -28,6 +28,7 @@ import {
   readLocalHostedGameDefaults,
   updatePlatformGame,
 } from "@air-jam/devtools-core/platform-games";
+import { runCompleteEvaluation } from "@air-jam/devtools-core/quality";
 import {
   bundleLocalRelease,
   exportPlatformReleaseGeneration,
@@ -1186,6 +1187,21 @@ const buildProgram = () => {
   aiPackCommand.action(() => {
     aiPackCommand.outputHelp();
   });
+
+  program
+    .command("evaluate")
+    .description(
+      "Run the complete game evaluation: typecheck, lint, tests, and production build",
+    )
+    .option("--dir <path>", "Project directory to evaluate")
+    .action(async (options: unknown) => {
+      const input = resolveActionOptions<{ dir?: string }>(options);
+      const result = await runCompleteEvaluation({ cwd: input.dir });
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      if (result.status !== "passed") {
+        process.exitCode = 1;
+      }
+    });
 
   const gameCommand = program
     .command("game")

@@ -422,6 +422,21 @@ export type RunQualityGateOptions = {
   packageFilter?: string;
 };
 
+export type RunCompleteEvaluationOptions = {
+  cwd?: string;
+};
+
+export type AirJamCompleteEvaluationResult = {
+  contract: "air-jam-complete-evaluation/v1";
+  status: "passed" | "failed";
+  startedAt: string;
+  endedAt: string;
+  gates: Array<{
+    gate: AirJamQualityGate;
+    result: CommandResult;
+  }>;
+};
+
 export type AirJamDevMode = "standalone-dev" | "arcade-dev" | "arcade-test";
 
 export type AirJamVisualArtifactMode = "standalone-dev" | "arcade-built";

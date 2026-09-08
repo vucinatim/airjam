@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { resolveLocalBackendOrigin } from "./runtime-env.mjs";
+import { resolveLocalBackendOrigin } from "./local-network.mjs";
 
 export const DEFAULT_AIR_JAM_DEV_BACKEND_URL = resolveLocalBackendOrigin();
 

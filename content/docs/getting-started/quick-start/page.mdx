@@ -90,6 +90,16 @@ This project is "vibecode friendly"—it includes documentation and AI instructi
 These paths are the current starter template shape.
 They are recommended defaults for new projects, not framework-mandated filenames.
 
+### Run the Complete Evaluation
+
+Before sharing a game—and again after any repair—run the canonical complete evaluation:
+
+```bash
+pnpm exec airjam evaluate --dir .
+```
+
+It returns one machine-readable `air-jam-complete-evaluation/v1` document containing the results of typecheck, lint, tests, and the production build. Agents can call the same service through the `airjam.evaluate` MCP action. Individual gates remain available when narrowing a failure.
+
 ### Refresh Managed Framework Guidance
 
 Scaffolded projects include an AI pack that owns canonical framework references under `docs/airjam/`. Top-level agent instructions and project-local skills are bootstrap files: after creation, they belong to the project and Air Jam never overwrites them.

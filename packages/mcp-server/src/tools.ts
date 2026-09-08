@@ -17,7 +17,10 @@ import {
 import { inspectGame, listGames } from "@air-jam/devtools-core/games";
 import { readDevLogs } from "@air-jam/devtools-core/logs";
 import { getPlatformMachineAuthStatus } from "@air-jam/devtools-core/platform-auth";
-import { runQualityGate } from "@air-jam/devtools-core/quality";
+import {
+  runCompleteEvaluation,
+  runQualityGate,
+} from "@air-jam/devtools-core/quality";
 import {
   bundleLocalRelease,
   exportPlatformReleaseGeneration,
@@ -297,6 +300,13 @@ export const buildToolDefinitions = ({
       inputSchema: runQualityGateInputSchema,
       run: async (input: z.infer<typeof runQualityGateInputSchema>) =>
         withJsonText(await runQualityGate(input)),
+    },
+    "airjam.evaluate": {
+      description:
+        "Run the complete Air Jam game evaluation: typecheck, lint, tests, and a production build. Returns every gate result in one stable document.",
+      inputSchema: z.object({ cwd: z.string().optional() }),
+      run: async ({ cwd }: { cwd?: string }) =>
+        withJsonText(await runCompleteEvaluation({ cwd })),
     },
     "airjam.auth_status": {
       description:
