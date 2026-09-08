@@ -1,7 +1,7 @@
 # Production Operational Job Worker Proof
 
-Last updated: 2026-08-30
-Status: Gate `G3-02` durable release-execution slice implemented and locally proven; production rollout pending
+Last updated: 2026-09-08
+Status: Gate `G3-02` durable release-execution slice reviewed, merged, and running in production; observation and rollback proof remain under `G3-08`
 
 ## Outcome
 
@@ -107,8 +107,11 @@ platform build, verifies both runtime entries and the packaged Playwright
 dependency, then starts each entry against a closed database. This prevents a
 build proof from uploading source maps or contacting configured providers.
 
-This change configures the fourth Railway process but does not deploy it or
-apply migration `0029` to production. Those remain explicit rollout actions.
+The fourth Railway process is now deployed in production. Deployment
+`a667f069-1609-4586-80ab-4befae6de106` runs merge revision
+`e6f03c1fd0f97d5f591ab99f6d2d98042da7e28b`; `/ready` reports `accepting`,
+fresh required budget evidence, no degraded required authorities, and a
+complete `6/6` production synthetic batch with zero failures or skips.
 
 ## Validation
 
@@ -137,12 +140,10 @@ fixtures and contain no production data.
 
 ## Remaining Gate Work
 
-This slice closes the release-executor migration, but not Gate `G3-02` itself.
-The gate still requires:
+This slice closes the release-executor migration and initial production
+activation, but not Gate `G3-02` or the separate `G3-08` observation gate.
+The remaining proof requires:
 
-1. automatic cleanup and reconciliation for abandoned uploads and retained
-   release/media lifecycle classes beyond attempt output roots
-2. global realtime room/controller admission and graceful drain
-3. measured queue-full, burst, overload, and dependency-degradation drills
-4. production migration and incremental worker rollout with observed health,
-   drain, retry, and rollback evidence
+1. measured queue-full, burst, overload, and dependency-degradation drills
+2. a retained production observation window covering cost, retry, drain, and
+   rollback behavior

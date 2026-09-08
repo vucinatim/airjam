@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-09-04
+Last updated: 2026-09-08
 Status: current snapshot
 
 This is the canonical quick-read status surface for the Air Jam repo.
@@ -525,8 +525,19 @@ tombstones control quota accounting, and the canonical CLI provides redacted
 preview/apply plus resource-filtered inspection. Superseded unpublished
 generations now also have a PostgreSQL-enforced 180-day lifecycle with a
 durable seven-day warning, creator export through dashboard/API/CLI/MCP, and
-retention renewal when exported or published. Realtime admission, overload
-proof, and explicit production rollout remain part of the unfinished gate.
+retention renewal when exported or published. Its eighth slice adds the
+[production realtime admission proof](./audits/v1-reliability/production-realtime-admission-proof.md):
+PostgreSQL now owns global hosted room and controller admission, lease expiry,
+single-replica rolling handoff, graceful drain, and creator/game shadow policy
+without changing the player-facing room-code flow. Protected PR `#109` passed
+the full CI and public-install matrix, Canonicalizer, and one GitHub-native Opus
+review before merging. Platform, realtime, and operational-worker production
+deployments all converged on merge revision
+`e6f03c1fd0f97d5f591ab99f6d2d98042da7e28b`; platform schema and hosted-release
+boundaries were ready, realtime accepted work with required budget authority,
+and the worker reported fresh budget evidence, no degraded required authority,
+and a clean `6/6` synthetic batch. `G3-02` remains open only for deliberate
+load/overload/recovery and remaining spend-guard/kill-switch closure evidence.
 
 The previous narrow v1 closeout plan was superseded by the 1.0 roadmap and is
 preserved in the
@@ -565,9 +576,10 @@ In short:
 1. keep the now-complete canonical production migration lifecycle and schema
    compatibility boundary stable; `G3-06` is merged, applied, and independently
    verified against the exact Railway production deployment
-2. finish invisible realtime admission in `G3-02`, then provision and observe
-   the operational worker and the now-implemented storage retention lifecycle
-   safely; migrate the four Railway application services and PostgreSQL to one
+2. exercise the now-live realtime admission, operational worker, and storage
+   retention lifecycle under measured load, overload, dependency failure,
+   recovery, cost, and rollback conditions; migrate the four Railway
+   application services and PostgreSQL to one
    reviewed `.railway/railway.ts` project graph before treating deployment
    configuration as release-ready
 3. provision an isolated ephemeral Railway/R2 rehearsal profile and unblock the

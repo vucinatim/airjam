@@ -1,6 +1,6 @@
 # Railway Deployment Guide
 
-Last updated: 2026-09-04
+Last updated: 2026-09-08
 Status: active guide
 
 Related docs:
@@ -66,14 +66,25 @@ That means:
    Railway service reference `${{Postgres.DATABASE_URL}}`. Never store it as a
    literal: a PR environment generates new Postgres credentials, and a copied
    production connection string will fail authentication.
-4. `resolvePlatformDeploymentConfig` detects `RAILWAY_ENVIRONMENT_NAME != "production"` and forces `githubAuthEnabled = false`. Avoids the GitHub OAuth wildcard-callback problem and keeps preview auth simple.
-5. The realtime server derives preview policy from the canonical deployment
+4. The realtime service must also retain
+   `AIRJAM_DEPLOYMENT_DEPENDS_ON_PLATFORM` as an ordering-only Railway reference
+   to `air-jam-platform`; application code intentionally does not read this
+   variable. The operational worker's four
+   `RAILWAY_SERVICE_AIR_JAM_*_URL` values must be service references to its
+   platform, realtime, self, and browser-worker siblings. Railway uses those
+   references as the PR-environment startup graph: platform migrates the fresh
+   database first, realtime activates second, and the operational worker waits
+   transitively for every synthetic target. Do not replace those references
+   with rendered URLs; doing so removes deployment ordering even when the
+   runtime value looks identical.
+5. `resolvePlatformDeploymentConfig` detects `RAILWAY_ENVIRONMENT_NAME != "production"` and forces `githubAuthEnabled = false`. Avoids the GitHub OAuth wildcard-callback problem and keeps preview auth simple.
+6. The realtime server derives preview policy from the canonical deployment
    environment resolver. Railway identity takes precedence over explicit local
    overrides, so production cannot self-identify as preview. The server
    requires the preview database for lane and capacity authority, while marking
    production provider-budget evidence as `not_applicable`; preview workers do
    not need production usage credentials to make realtime ready.
-6. `.github/workflows/preview-comment.yml` polls Railway, resolves the platform service domain in the new environment, and posts a sticky preview-URL comment on the PR.
+7. `.github/workflows/preview-comment.yml` polls Railway, resolves the platform service domain in the new environment, and posts a sticky preview-URL comment on the PR.
 
 The workflow needs a single repo secret: `RAILWAY_PROJECT_TOKEN` (a Railway project-scoped token).
 

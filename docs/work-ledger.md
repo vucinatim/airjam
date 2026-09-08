@@ -1,6 +1,6 @@
 # Air Jam Work Ledger
 
-Last updated: 2026-09-04
+Last updated: 2026-09-08
 Status: historical memory
 
 This file is the append-only historical memory for the repo.
@@ -17,6 +17,54 @@ For the current snapshot, use [current-state.md](./current-state.md).
 The pre-reset overloaded ledger has been preserved at:
 
 1. [archive/2026-05-08-work-ledger-pre-os-reset.md](./archive/2026-05-08-work-ledger-pre-os-reset.md)
+
+## 2026-09-08 - Shared Realtime Admission And The Operational Worker Went Live
+
+- replaced process-local hosted admission with one PostgreSQL authority for
+  realtime instances, rooms, controllers, creator/game policy, lease expiry,
+  rolling handoff, and graceful drain while keeping gameplay state in the
+  realtime process and preserving the invisible room-code experience
+- made the production budget requirement one canonical operations-contract
+  decision shared by platform, realtime, and worker boundaries; previews now
+  fail closed when a required sibling target is missing and never inherit a
+  production synthetic URL
+- made production cleanup scheduling deploy-safe and activated the separately
+  drainable operational worker for durable release work, lifecycle cleanup,
+  budget refresh, event delivery, and continuous synthetic evaluation
+- passed the full batch gate, fresh PostgreSQL migration/admission proof,
+  cross-platform Node 22/24 public-install matrix, Canonicalizer, and one final
+  GitHub-native Opus review; corrected or answered all eight review comments
+  before merge
+- merged protected [PR `#109`](https://github.com/vucinatim/air-jam/pull/109)
+  normally as `e6f03c1fd0f97d5f591ab99f6d2d98042da7e28b`
+- verified exact Railway production deployments for platform
+  `2d46a702-ade8-48de-ac62-dfd945496594`, realtime server
+  `dcecb524-9eff-4c0e-8189-8c10398bbf4e`, and operational worker
+  `a667f069-1609-4586-80ab-4befae6de106`
+- observed public platform readiness at the exact merge revision, realtime
+  health/readiness accepting new work with required budget authority, and the
+  worker accepting with fresh budget evidence, no degraded required authority,
+  and a clean `6/6` production synthetic batch
+- used the evidence-only follow-up PR to expose a fresh-preview startup race:
+  realtime and worker correctly failed closed before the platform migration
+  owner had finished; added permanent Railway service-reference dependencies
+  so new PR environments order platform migration, realtime activation, and
+  synthetic-worker activation instead of relying on build timing
+- recreated PR `#110` as a genuinely empty Railway environment and retained the
+  exact ordered deployment proof: platform `def2e2b1-0c5a-4fba-9630-ed31719433ee`
+  completed migration `0039` first while realtime deployment
+  `df44780f-86bc-48c9-a315-a73d454e7f31` remained `WAITING` with no snapshot or
+  runtime logs; after the protected GitHub checks completed, realtime became
+  healthy without the former missing-relation failure, and operational worker
+  `dca3022a-5ae0-4c40-99ea-9e92487f6322` activated last
+- verified all three public preview contracts at exact revision
+  `452a6bdba48586fbb0628c82df0937ab975e009b`: platform schema compatibility was
+  ready, realtime accepted new work with preview budget evidence correctly
+  marked not applicable, and the worker reported no degraded authority plus a
+  clean `6/6` synthetic batch
+- kept `G3-02` and `G3-08` open: initial deployment is proven, while deliberate
+  load/overload/dependency-recovery and retained cost/drain/rollback observation
+  still need measured evidence
 
 ## 2026-09-04 - Production Recovery Was Automated And Live-Proven
 
