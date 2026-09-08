@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -228,6 +228,18 @@ const createFixture = () => {
           projectId,
         };
       },
+      waitForVolumeInstance: async ({ serviceId, mountPath }) => {
+        const volume = staging.volumeInstances.find(
+          (candidate) =>
+            candidate.serviceId === serviceId &&
+            candidate.mountPath === mountPath,
+        );
+        return {
+          volume: volume ?? null,
+          attempt: 1,
+          matched: Boolean(volume),
+        };
+      },
       triggerServiceDeployment: async ({ serviceId, commitSha }) => {
         const deploymentId = `deployment-${serviceId}`;
         deployments.push({ serviceId, commitSha, deploymentId });
@@ -256,6 +268,39 @@ test("golden-path staging CLI exposes non-secret provisioning and cleanup", () =
   assert.match(help, /provision/u);
   assert.match(help, /status/u);
   assert.match(help, /empty-storage/u);
+});
+
+test("golden-path staging CLI rejects an unknown commit before provider access", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      "golden-path",
+      "staging",
+      "deploy",
+      "--railway-project",
+      projectId,
+      "--railway-environment",
+      stagingId,
+      "--commit",
+      "f".repeat(40),
+      "--json",
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        RAILWAY_API_TOKEN: "",
+        RAILWAY_PROJECT_TOKEN: "",
+        RAILWAY_TOKEN: "",
+      },
+    },
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /does not resolve to a local Git commit/u);
+  assert.doesNotMatch(result.stderr, /Missing Railway API token/u);
 });
 
 test("provision rotates every authority before deployment and proves R2 isolation", async () => {
@@ -416,6 +461,68 @@ test("deploy can safely retry an already-started isolated environment", async ()
   assert.equal(result.ok, true);
   assert.equal(result.deployments.length, 5);
   assert.equal(result.postgresVolume.created, true);
+});
+
+test("deploy reuses successful target deployments after an interrupted run", async () => {
+  const fixture = createFixture();
+  await provisionGoldenPathStaging({
+    projectId,
+    environmentId: stagingId,
+    releaseOrigin: "https://games-staging.air-jam.app",
+    r2Bucket: "air-jam-preview-releases",
+    ttlSeconds: 3_600,
+    client: fixture.client,
+    probeR2Isolation: async () => ({
+      stagingWrite: true,
+      productionReadDenied: true,
+      productionWriteDenied: true,
+      probeObjectRemoved: true,
+    }),
+  });
+  const commitSha = "c".repeat(40);
+  fixture.staging.volumeInstances.push({
+    id: "postgres-volume-instance-staging",
+    serviceId: "postgres-service",
+    mountPath: "/var/lib/postgresql/data",
+  });
+  for (const serviceName of ["Postgres", "air-jam-platform"]) {
+    const service = fixture.staging.serviceInstances.find(
+      (candidate) => candidate.serviceName === serviceName,
+    );
+    service.latestDeployment = {
+      id: `existing-${serviceName}`,
+      status: "SUCCESS",
+      meta: serviceName === "Postgres" ? {} : { commitHash: commitSha },
+    };
+  }
+  const stages = [];
+
+  const result = await deployGoldenPathStaging({
+    projectId,
+    environmentId: stagingId,
+    commitSha,
+    client: fixture.client,
+    fetchImpl: async (url) => ({
+      ok: true,
+      status: 200,
+      url: url.toString(),
+      json: async () => ({ ok: true, service: "platform" }),
+    }),
+    onProgress: (stage) => stages.push(stage),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.postgresVolume.created, false);
+  assert.equal(fixture.volumeCreations.length, 0);
+  assert.equal(fixture.deployments.length, 3);
+  assert.deepEqual(
+    result.deployments.slice(0, 2).map(({ operation }) => operation),
+    ["reused", "reused"],
+  );
+  assert.deepEqual(stages.slice(0, 2), [
+    "deploy:Postgres:reuse",
+    "deploy:air-jam-platform:reuse",
+  ]);
 });
 
 test("destructive storage cleanup refuses Railway production explicitly", async () => {

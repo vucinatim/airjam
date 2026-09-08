@@ -647,7 +647,7 @@ export const resolveGoldenPathRailwayStagingTarget = async ({
       !railwayReadyDeploymentStatuses.has(serviceDeployment.status)
     ) {
       throw new Error(
-        `Railway staging ${pair.serviceName} deployment is ${serviceDeployment?.status ?? "missing"}; expected SUCCESS or SLEEPING.`,
+        `Railway staging ${pair.stagingInstance.serviceName} deployment is ${serviceDeployment?.status ?? "missing"}; expected SUCCESS or SLEEPING.`,
       );
     }
   }

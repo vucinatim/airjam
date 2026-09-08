@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 import { runGoldenPathBootstrap } from "../lib/golden-path-bootstrap.mjs";
@@ -28,6 +29,24 @@ const resolveManifestPath = (value) => {
 
 const printJson = (value) => {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+};
+
+const resolveLocalCommit = (value) => {
+  const commit = String(value ?? "").trim();
+  if (!/^[0-9a-f]{40}$/u.test(commit)) {
+    throw new Error("--commit must be a full lowercase 40-character Git SHA.");
+  }
+  const result = spawnSync(
+    "git",
+    ["rev-parse", "--verify", `${commit}^{commit}`],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+  if (result.status !== 0 || result.stdout.trim() !== commit) {
+    throw new Error(
+      `--commit does not resolve to a local Git commit: ${commit}. Fetch or push the intended commit before deploying.`,
+    );
+  }
+  return commit;
 };
 
 const addManifestOption = (command) =>
@@ -192,10 +211,11 @@ export const registerGoldenPathCommands = (program) => {
     .requiredOption("--commit <sha>", "Exact 40-character Git commit to deploy")
     .option("--json", "Print stable non-secret JSON")
     .action(async (options) => {
+      const commitSha = resolveLocalCommit(options.commit);
       const result = await deployGoldenPathStaging({
         projectId: options.railwayProject,
         environmentId: options.railwayEnvironment,
-        commitSha: options.commit,
+        commitSha,
         onProgress: (stage) => {
           process.stderr.write(`[golden-path staging] ${stage}\n`);
         },

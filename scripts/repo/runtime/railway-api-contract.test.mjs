@@ -121,6 +121,83 @@ test("waitForDeployment returns success once the deployment reaches a terminal s
   assert.equal(calls, 2);
 });
 
+test("waitForDeployment tolerates a transient provider read failure", async () => {
+  let calls = 0;
+  const client = createRailwayApiClient({
+    token: "token",
+    fetchImpl: createMockFetch(() => {
+      calls += 1;
+      if (calls === 1) throw new Error("transient read failure");
+      return {
+        data: {
+          deployment: {
+            id: "deployment-1",
+            status: "SUCCESS",
+            url: null,
+            staticUrl: "service.up.railway.app",
+          },
+        },
+      };
+    }),
+  });
+
+  const result = await client.waitForDeployment({
+    deploymentId: "deployment-1",
+    retries: 2,
+    retryDelayMs: 0,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.attempt, 2);
+  assert.equal(calls, 2);
+});
+
+test("waitForVolumeInstance tolerates delayed Railway attachment visibility", async () => {
+  let calls = 0;
+  const client = createRailwayApiClient({
+    token: "token",
+    fetchImpl: createMockFetch(() => {
+      calls += 1;
+      return {
+        data: {
+          environment: {
+            id: "environment-1",
+            name: "staging",
+            projectId: "project-1",
+            serviceInstances: { edges: [] },
+            volumeInstances: {
+              edges:
+                calls === 1
+                  ? []
+                  : [
+                      {
+                        node: {
+                          id: "volume-instance-1",
+                          serviceId: "service-1",
+                          mountPath: "/var/lib/postgresql/data",
+                        },
+                      },
+                    ],
+            },
+          },
+        },
+      };
+    }),
+  });
+
+  const result = await client.waitForVolumeInstance({
+    environmentId: "environment-1",
+    serviceId: "service-1",
+    mountPath: "/var/lib/postgresql/data",
+    retries: 2,
+    retryDelayMs: 0,
+  });
+
+  assert.equal(result.matched, true);
+  assert.equal(result.volume.id, "volume-instance-1");
+  assert.equal(result.attempt, 2);
+});
+
 test("Railway recovery helpers expose backup policy and exact deployment actions", async () => {
   const observed = [];
   const client = createRailwayApiClient({

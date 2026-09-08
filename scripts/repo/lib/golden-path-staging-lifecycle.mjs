@@ -26,6 +26,8 @@ const requiredText = (value, label) => {
 
 const randomSecret = () => randomBytes(32).toString("base64url");
 const postgresDataMountPath = "/var/lib/postgresql/data";
+const readyDeploymentStatuses = new Set(["SUCCESS", "SLEEPING"]);
+const failedDeploymentStatuses = new Set(["FAILED", "CRASHED", "REMOVED"]);
 
 const serviceByName = (environment, name) => {
   const service = environment.serviceInstances.find(
@@ -96,16 +98,17 @@ const ensurePostgresVolume = async ({
     serviceId: postgresServiceId,
     mountPath: postgresDataMountPath,
   });
-  const refreshedEnvironment = await client.getEnvironment(environmentId);
-  const created = resolvePostgresVolume({
-    environment: refreshedEnvironment,
-    postgresServiceId,
+  const attachment = await client.waitForVolumeInstance({
+    environmentId,
+    serviceId: postgresServiceId,
+    mountPath: postgresDataMountPath,
   });
-  if (!created) {
+  if (!attachment.matched) {
     throw new Error(
-      "Railway did not expose the newly created golden-path PostgreSQL volume.",
+      `Railway did not expose the newly created golden-path PostgreSQL volume${attachment.error ? `: ${attachment.error}` : "."}`,
     );
   }
+  const created = attachment.volume;
   return { id: created.id, mountPath: created.mountPath, created: true };
 };
 
@@ -423,7 +426,7 @@ export const provisionGoldenPathStaging = async ({
   };
 };
 
-const assertDeploymentSucceeded = (result, serviceName) => {
+const assertDeploymentSucceeded = (result, serviceName, operation) => {
   if (!result?.ok || !result.deployment?.id) {
     throw new Error(
       `Railway staging deployment failed for ${serviceName} (${result?.deployment?.status ?? "unknown"}).`,
@@ -433,6 +436,7 @@ const assertDeploymentSucceeded = (result, serviceName) => {
     serviceName,
     deploymentId: result.deployment.id,
     status: result.deployment.status,
+    operation,
   };
 };
 
@@ -485,6 +489,34 @@ export const deployGoldenPathStaging = async ({
   const worker = serviceByName(environment, "air-jam-platform-worker");
 
   const deployAndWait = async (service, sha = normalizedCommitSha) => {
+    const existing = service.latestDeployment;
+    const targetsCommit =
+      sha === null || existing?.meta?.commitHash === normalizedCommitSha;
+    if (
+      existing?.id &&
+      targetsCommit &&
+      !failedDeploymentStatuses.has(existing.status)
+    ) {
+      if (readyDeploymentStatuses.has(existing.status)) {
+        onProgress(`deploy:${service.serviceName}:reuse`);
+        return assertDeploymentSucceeded(
+          { ok: true, deployment: existing },
+          service.serviceName,
+          "reused",
+        );
+      }
+      onProgress(`deploy:${service.serviceName}:resume`);
+      const resumed = await client.waitForDeployment({
+        deploymentId: existing.id,
+      });
+      const evidence = assertDeploymentSucceeded(
+        resumed,
+        service.serviceName,
+        "resumed",
+      );
+      onProgress(`deploy:${service.serviceName}:success`);
+      return evidence;
+    }
     onProgress(`deploy:${service.serviceName}:trigger`);
     const deploymentId = await client.triggerServiceDeployment({
       environmentId,
@@ -492,7 +524,11 @@ export const deployGoldenPathStaging = async ({
       commitSha: sha,
     });
     const result = await client.waitForDeployment({ deploymentId });
-    const evidence = assertDeploymentSucceeded(result, service.serviceName);
+    const evidence = assertDeploymentSucceeded(
+      result,
+      service.serviceName,
+      "triggered",
+    );
     onProgress(`deploy:${service.serviceName}:success`);
     return evidence;
   };
