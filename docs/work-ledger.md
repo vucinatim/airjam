@@ -50,6 +50,18 @@ The pre-reset overloaded ledger has been preserved at:
   owner had finished; added permanent Railway service-reference dependencies
   so new PR environments order platform migration, realtime activation, and
   synthetic-worker activation instead of relying on build timing
+- recreated PR `#110` as a genuinely empty Railway environment and retained the
+  exact ordered deployment proof: platform `def2e2b1-0c5a-4fba-9630-ed31719433ee`
+  completed migration `0039` first while realtime deployment
+  `df44780f-86bc-48c9-a315-a73d454e7f31` remained `WAITING` with no snapshot or
+  runtime logs; after the protected GitHub checks completed, realtime became
+  healthy without the former missing-relation failure, and operational worker
+  `dca3022a-5ae0-4c40-99ea-9e92487f6322` activated last
+- verified all three public preview contracts at exact revision
+  `452a6bdba48586fbb0628c82df0937ab975e009b`: platform schema compatibility was
+  ready, realtime accepted new work with preview budget evidence correctly
+  marked not applicable, and the worker reported no degraded authority plus a
+  clean `6/6` synthetic batch
 - kept `G3-02` and `G3-08` open: initial deployment is proven, while deliberate
   load/overload/dependency-recovery and retained cost/drain/rollback observation
   still need measured evidence
