@@ -203,7 +203,7 @@ owner.
 Protected [PR `#109`](https://github.com/vucinatim/air-jam/pull/109)
 merged normally after:
 
-1. the full batch gate passed with `75` test files and `381` tests
+1. the full batch gate passed with `75` test files and `383` tests
 2. the fresh PostgreSQL 17 migration and admission suite passed `14/14`
 3. every CI, workspace-build, standalone-deploy, performance, and public-install
    matrix check passed on Linux, macOS, and Windows under Node 22 and 24

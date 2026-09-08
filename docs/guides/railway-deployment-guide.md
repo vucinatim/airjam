@@ -66,8 +66,10 @@ That means:
    Railway service reference `${{Postgres.DATABASE_URL}}`. Never store it as a
    literal: a PR environment generates new Postgres credentials, and a copied
    production connection string will fail authentication.
-4. The realtime service must also retain an explicit Railway reference to
-   `air-jam-platform`, and the operational worker's four
+4. The realtime service must also retain
+   `AIRJAM_DEPLOYMENT_DEPENDS_ON_PLATFORM` as an ordering-only Railway reference
+   to `air-jam-platform`; application code intentionally does not read this
+   variable. The operational worker's four
    `RAILWAY_SERVICE_AIR_JAM_*_URL` values must be service references to its
    platform, realtime, self, and browser-worker siblings. Railway uses those
    references as the PR-environment startup graph: platform migrates the fresh
