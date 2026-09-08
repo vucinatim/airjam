@@ -45,6 +45,11 @@ The pre-reset overloaded ledger has been preserved at:
   health/readiness accepting new work with required budget authority, and the
   worker accepting with fresh budget evidence, no degraded required authority,
   and a clean `6/6` production synthetic batch
+- used the evidence-only follow-up PR to expose a fresh-preview startup race:
+  realtime and worker correctly failed closed before the platform migration
+  owner had finished; added permanent Railway service-reference dependencies
+  so new PR environments order platform migration, realtime activation, and
+  synthetic-worker activation instead of relying on build timing
 - kept `G3-02` and `G3-08` open: initial deployment is proven, while deliberate
   load/overload/dependency-recovery and retained cost/drain/rollback observation
   still need measured evidence
