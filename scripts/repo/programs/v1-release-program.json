@@ -3,7 +3,7 @@
   "id": "air-jam-1.0",
   "title": "Air Jam 1.0 Release Program",
   "status": "active",
-  "updatedAt": "2026-09-08T12:38:51.140Z",
+  "updatedAt": "2026-09-08T22:18:04.754Z",
   "roadmap": "docs/plans/v1-release-roadmap-plan.md",
   "executionPlan": "docs/plans/v1-release-execution-plan.md",
   "estimate": {
@@ -407,7 +407,7 @@
       "priority": 30,
       "title": "Run the primary create, control, inspect, fix, evaluate, publish, and verify scenario",
       "authority": "autonomous",
-      "status": "blocked",
+      "status": "in_progress",
       "dependsOn": [
         "G1-06",
         "G2-02"
@@ -419,16 +419,15 @@
       "evidenceRequirements": [
         "retained clean-room transcript and machine-readable artifacts"
       ],
-      "note": "Independent PR #61 review hardened environment-wide fail-closed staging attestation; current provider facts remain unsafe.",
-      "updatedAt": "2026-08-29T18:03:33.619Z",
+      "note": "Isolated ephemeral staging is deployed and provider-verified; primary external-agent lifecycle may now run.",
+      "updatedAt": "2026-09-08T22:18:04.754Z",
       "evidence": [
-        "document:docs/audits/v1-golden-path/primary-agent-run-audit.md"
+        "document:docs/audits/v1-golden-path/primary-agent-run-audit.md",
+        "artifact:git:cdf023760726e6b8a5b7003a8f628093d7983528",
+        "url:https://games-staging.air-jam.app",
+        "command:pnpm --silent run repo -- golden-path staging deploy --railway-project 0b0761f9-9bb1-4d4f-8191-50d43cccdee7 --railway-environment 814fa07a-ed20-48c0-ba1a-b8a0524c516e --commit cdf023760726e6b8a5b7003a8f628093d7983528 --json"
       ],
-      "owner": "/root",
-      "blocker": {
-        "type": "external",
-        "summary": "Railway PR staging is provider-attested but reuses production release storage and sensitive credentials; the primary agent must not start until isolated staging values are provisioned."
-      }
+      "owner": "/root"
     },
     {
       "id": "G2-04",

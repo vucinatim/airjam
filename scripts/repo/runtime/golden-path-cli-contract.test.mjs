@@ -128,6 +128,7 @@ test("primary-run isolation permits only run-owned writes and declared network t
   const stagingUrl = "https://air-jam-platform-pr-123.example.test";
   const permissions = buildCodexPermissionArgs({ runRoot, stagingUrl });
   const joinedArgs = permissions.args.join("\n");
+  const joinedProbeArgs = permissions.globalArgs.join("\n");
 
   assert.match(joinedArgs, /network_proxy/);
   assert.match(joinedArgs, /approval_policy="never"/);
@@ -137,6 +138,8 @@ test("primary-run isolation permits only run-owned writes and declared network t
   assert.match(joinedArgs, /air-jam-platform-pr-123\.example\.test/);
   assert.match(joinedArgs, /127\.0\.0\.1/);
   assert.match(joinedArgs, /localhost/);
+  assert.match(joinedArgs, /--add-dir/u);
+  assert.doesNotMatch(joinedProbeArgs, /--add-dir/u);
   assert.deepEqual(permissions.profile.deniedReadRoots, ["<repo>"]);
   assert.equal(permissions.profile.network.managedProxy, true);
   assert.equal(permissions.profile.network.allowLocalBinding, true);

@@ -404,12 +404,14 @@ export const probeGoldenPathIsolation = ({
   const probePath = path.join(workspaceDir, ".airjam-isolation-write-probe");
   const commonArgs = [
     "sandbox",
-    ...codexPermissions.args,
+    ...codexPermissions.globalArgs,
     "--permission-profile",
     permissionProfileName,
     "--cd",
     workspaceDir,
     "--include-managed-config",
+    "--allow-unix-socket",
+    path.join(runRoot, "tmp"),
   ];
   const probes = [
     {
