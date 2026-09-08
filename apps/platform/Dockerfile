@@ -53,11 +53,10 @@ COPY games/last-band-standing/package.json      ./games/last-band-standing/
 # (~12K) — copy the whole dir, not just the package.json.
 COPY apps/platform/loader ./apps/platform/loader
 
-# Omit an explicit cache id so this Dockerfile remains portable across the
-# platform and operational-worker services. Railway scopes the anonymous cache
-# mount to the active build instead of rejecting another service's identity.
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+# The manifest-only dependency layer is the portable cache boundary. Do not use
+# Railway's service-scoped cache mount here: this Dockerfile intentionally builds
+# both the platform and operational-worker services.
+RUN pnpm install --frozen-lockfile
 
 # ============================================================================
 # Stage 2: builder — compile the Next.js app

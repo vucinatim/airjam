@@ -53,10 +53,9 @@ COPY games/last-band-standing/package.json      ./games/last-band-standing/
 # install runs. Tiny (~12K) — copy the whole dir.
 COPY apps/platform/loader ./apps/platform/loader
 
-# Keep the cache mount provider-neutral. Railway supplies build-scoped cache
-# authority, so the Dockerfile must not embed a service identity.
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+# Keep the dependency layer provider-neutral. Railway cache mounts require a
+# service identity, while the manifest-only layer is already safely cacheable.
+RUN pnpm install --frozen-lockfile
 
 # ============================================================================
 # Stage 2: runtime — build the server and run it
