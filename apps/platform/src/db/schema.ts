@@ -196,7 +196,10 @@ export const {
   runtimeUsageGameSessionMetrics,
   runtimeUsageDailyGameMetrics,
 } = createRuntimeDatabaseSchema({
-  appIdGameIdReference: () => games.id,
+  appIdOwnerScopeReference: () => ({
+    gameId: games.id,
+    creatorId: games.userId,
+  }),
 });
 
 export const platformSchemaMigrationRunStatusValues = [

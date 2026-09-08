@@ -410,25 +410,47 @@ export const deriveOperationalBudgetAuthoritySnapshot = ({
 };
 
 export type RuntimeDatabaseSchemaOptions = {
-  appIdGameIdReference?: () => AnyPgColumn;
+  appIdOwnerScopeReference?: () => {
+    gameId: AnyPgColumn;
+    creatorId: AnyPgColumn;
+  };
 };
 
 export const createRuntimeDatabaseSchema = ({
-  appIdGameIdReference,
+  appIdOwnerScopeReference,
 }: RuntimeDatabaseSchemaOptions = {}) => {
-  const appIdGameIdColumn = appIdGameIdReference
-    ? text("game_id").references(appIdGameIdReference)
+  const appIdOwnerScope = appIdOwnerScopeReference?.();
+  const appIdGameIdColumn = appIdOwnerScope
+    ? text("game_id").references(() => appIdOwnerScope.gameId)
     : text("game_id");
 
-  const appIds = pgTable("app_ids", {
-    id: text("id").primaryKey(),
-    gameId: appIdGameIdColumn.notNull().unique(),
-    key: text("key").notNull().unique(),
-    allowedOrigins: jsonb("allowed_origins").$type<string[]>(),
-    isActive: boolean("is_active").default(true).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    lastUsedAt: timestamp("last_used_at"),
-  });
+  const appIds = pgTable(
+    "app_ids",
+    {
+      id: text("id").primaryKey(),
+      gameId: appIdGameIdColumn.notNull().unique(),
+      creatorId: text("creator_id"),
+      key: text("key").notNull().unique(),
+      allowedOrigins: jsonb("allowed_origins").$type<string[]>(),
+      isActive: boolean("is_active").default(true).notNull(),
+      createdAt: timestamp("created_at").defaultNow().notNull(),
+      lastUsedAt: timestamp("last_used_at"),
+    },
+    (table) => {
+      return appIdOwnerScope
+        ? [
+            foreignKey({
+              name: "app_ids_game_creator_fk",
+              columns: [table.gameId, table.creatorId],
+              foreignColumns: [
+                appIdOwnerScope.gameId,
+                appIdOwnerScope.creatorId,
+              ],
+            }),
+          ]
+        : [];
+    },
+  );
 
   const runtimeUsageSessions = pgTable(
     "runtime_usage_sessions",

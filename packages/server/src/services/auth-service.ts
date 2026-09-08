@@ -87,7 +87,15 @@ const resolveActiveAppIdRecord = async ({
   }
 
   const [keyRecord] = await db
-    .select()
+    .select({
+      id: appIds.id,
+      gameId: appIds.gameId,
+      key: appIds.key,
+      allowedOrigins: appIds.allowedOrigins,
+      isActive: appIds.isActive,
+      createdAt: appIds.createdAt,
+      lastUsedAt: appIds.lastUsedAt,
+    })
     .from(appIds)
     .where(and(eq(appIds.key, appId), eq(appIds.isActive, true)))
     .limit(1);
