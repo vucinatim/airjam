@@ -25,6 +25,7 @@ const requiredText = (value, label) => {
 };
 
 const randomSecret = () => randomBytes(32).toString("base64url");
+const postgresDataMountPath = "/var/lib/postgresql/data";
 
 const serviceByName = (environment, name) => {
   const service = environment.serviceInstances.find(
@@ -57,6 +58,55 @@ const assertDormantStagingShell = (environment) => {
       `Golden-path staging must be provisioned before its first deployment; found ${deployedServices.map((service) => service.serviceName).join(", ")}.`,
     );
   }
+};
+
+const resolvePostgresVolume = ({ environment, postgresServiceId }) => {
+  const matches = (environment.volumeInstances ?? []).filter(
+    (volume) => volume.serviceId === postgresServiceId,
+  );
+  if (matches.length > 1) {
+    throw new Error(
+      `Golden-path staging has ${matches.length} PostgreSQL volumes; expected exactly one.`,
+    );
+  }
+  const volume = matches[0] ?? null;
+  if (volume && volume.mountPath !== postgresDataMountPath) {
+    throw new Error(
+      `Golden-path staging PostgreSQL volume must mount at ${postgresDataMountPath}.`,
+    );
+  }
+  return volume;
+};
+
+const ensurePostgresVolume = async ({
+  client,
+  projectId,
+  environmentId,
+  environment,
+  postgresServiceId,
+}) => {
+  const existing = resolvePostgresVolume({ environment, postgresServiceId });
+  if (existing) {
+    return { id: existing.id, mountPath: existing.mountPath, created: false };
+  }
+
+  await client.createVolume({
+    projectId,
+    environmentId,
+    serviceId: postgresServiceId,
+    mountPath: postgresDataMountPath,
+  });
+  const refreshedEnvironment = await client.getEnvironment(environmentId);
+  const created = resolvePostgresVolume({
+    environment: refreshedEnvironment,
+    postgresServiceId,
+  });
+  if (!created) {
+    throw new Error(
+      "Railway did not expose the newly created golden-path PostgreSQL volume.",
+    );
+  }
+  return { id: created.id, mountPath: created.mountPath, created: true };
 };
 
 const createR2Client = ({ endpoint, credentials }) =>
@@ -421,6 +471,13 @@ export const deployGoldenPathStaging = async ({
     primaryEnvironment,
     serviceVariablePairs,
   });
+  const postgresVolume = await ensurePostgresVolume({
+    client,
+    projectId,
+    environmentId,
+    environment,
+    postgresServiceId: stagingPostgres.serviceId,
+  });
 
   const platform = serviceByName(environment, "air-jam-platform");
   const server = serviceByName(environment, "air-jam-server");
@@ -459,6 +516,7 @@ export const deployGoldenPathStaging = async ({
     projectId,
     environmentId,
     commitSha: normalizedCommitSha,
+    postgresVolume,
     deployments,
     target,
   };

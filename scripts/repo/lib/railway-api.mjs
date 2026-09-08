@@ -439,6 +439,29 @@ export const createRailwayApiClient = ({
     return data.volumeInstanceBackupList ?? [];
   };
 
+  const createVolume = async ({
+    projectId,
+    environmentId,
+    serviceId,
+    mountPath,
+  }) => {
+    const data = await request({
+      query: `
+        mutation RailwayVolumeCreate($input: VolumeCreateInput!) {
+          volumeCreate(input: $input) {
+            id
+            name
+            projectId
+          }
+        }
+      `,
+      variables: {
+        input: { projectId, environmentId, serviceId, mountPath },
+      },
+    });
+    return data.volumeCreate;
+  };
+
   const listVolumeBackupSchedules = async ({ volumeInstanceId }) => {
     const data = await request({
       query: `
@@ -827,6 +850,7 @@ export const createRailwayApiClient = ({
     getProject,
     listEnvironments,
     getEnvironment,
+    createVolume,
     listVolumeBackups,
     listVolumeBackupSchedules,
     updateVolumeBackupSchedules,

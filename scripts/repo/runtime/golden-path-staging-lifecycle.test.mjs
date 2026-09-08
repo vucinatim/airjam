@@ -33,6 +33,15 @@ const createEnvironment = ({ production }) => {
     projectId,
     isEphemeral: !production,
     sourceEnvironment: production ? null : { id: productionId },
+    volumeInstances: production
+      ? [
+          {
+            id: "postgres-volume-instance-production",
+            serviceId: "postgres-service",
+            mountPath: "/var/lib/postgresql/data",
+          },
+        ]
+      : [],
     serviceInstances: [
       ...serviceNames.map((serviceName) => ({
         id: `${serviceName}-instance-${suffix}`,
@@ -166,10 +175,12 @@ const createFixture = () => {
   }
   const writes = [];
   const deployments = [];
+  const volumeCreations = [];
   return {
     staging,
     writes,
     deployments,
+    volumeCreations,
     variables,
     client: {
       getProject: async () => ({
@@ -195,6 +206,27 @@ const createFixture = () => {
         variables.set(key, { ...variables.get(key), ...updates });
         writes.push({ serviceId, names: Object.keys(updates).sort() });
         return true;
+      },
+      createVolume: async ({
+        projectId: requestedProjectId,
+        environmentId,
+        serviceId,
+        mountPath,
+      }) => {
+        assert.equal(requestedProjectId, projectId);
+        assert.equal(environmentId, stagingId);
+        const volume = {
+          id: "postgres-volume-instance-staging",
+          serviceId,
+          mountPath,
+        };
+        staging.volumeInstances.push(volume);
+        volumeCreations.push(volume);
+        return {
+          id: "postgres-volume-staging",
+          name: "postgres-volume",
+          projectId,
+        };
       },
       triggerServiceDeployment: async ({ serviceId, commitSha }) => {
         const deploymentId = `deployment-${serviceId}`;
@@ -324,6 +356,8 @@ test("deploy starts data and application services in dependency order", async ()
 
   assert.equal(result.ok, true);
   assert.equal(result.commitSha, commitSha);
+  assert.equal(result.postgresVolume.created, true);
+  assert.equal(fixture.volumeCreations.length, 1);
   assert.equal(result.deployments.length, 5);
   assert.deepEqual(
     fixture.deployments.map(({ serviceId, commitSha: sha }) => ({
@@ -381,6 +415,7 @@ test("deploy can safely retry an already-started isolated environment", async ()
 
   assert.equal(result.ok, true);
   assert.equal(result.deployments.length, 5);
+  assert.equal(result.postgresVolume.created, true);
 });
 
 test("destructive storage cleanup refuses Railway production explicitly", async () => {

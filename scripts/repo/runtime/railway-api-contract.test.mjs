@@ -143,6 +143,17 @@ test("Railway recovery helpers expose backup policy and exact deployment actions
           },
         };
       }
+      if (body.query.includes("RailwayVolumeCreate")) {
+        return {
+          data: {
+            volumeCreate: {
+              id: "volume-created",
+              name: "postgres-volume",
+              projectId: "project-1",
+            },
+          },
+        };
+      }
       if (body.query.includes("RailwayVolumeBackupSchedules")) {
         return {
           data: {
@@ -209,6 +220,19 @@ test("Railway recovery helpers expose backup policy and exact deployment actions
     }),
     true,
   );
+  const createdVolume = await client.createVolume({
+    projectId: "project-1",
+    environmentId: "environment-1",
+    serviceId: "service-1",
+    mountPath: "/var/lib/postgresql/data",
+  });
+  assert.equal(createdVolume.id, "volume-created");
+  assert.deepEqual(observed[3].variables.input, {
+    projectId: "project-1",
+    environmentId: "environment-1",
+    serviceId: "service-1",
+    mountPath: "/var/lib/postgresql/data",
+  });
   const deployments = await client.listDeployments({
     projectId: "project-1",
     environmentId: "environment-1",
@@ -221,18 +245,18 @@ test("Railway recovery helpers expose backup policy and exact deployment actions
   });
   assert.equal(rollback, true);
   assert.doesNotMatch(
-    observed[4].query,
+    observed[5].query,
     /deploymentRollback\(id: \$id\)\s*\{/u,
   );
   assert.match(
-    observed[4].query,
+    observed[5].query,
     /mutation RailwayDeploymentRollback[\s\S]*deploymentRollback\(id: \$id\)\s*\}/u,
   );
   assert.deepEqual(observed[2].variables, {
     volumeInstanceId: "volume-1",
     kinds: ["DAILY", "WEEKLY"],
   });
-  assert.deepEqual(observed[4].variables, { id: "deployment-old" });
+  assert.deepEqual(observed[5].variables, { id: "deployment-old" });
 });
 
 test("Railway waits for a new service deployment matching the exact target", async () => {
