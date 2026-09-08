@@ -3,6 +3,7 @@ import {
   readOperationalAuthoritySnapshot,
   REALTIME_ADMISSION_POLICY,
   realtimeAdmissionInstanceIsLive,
+  type OperationalBudgetRequirement,
   type OperationalLane,
 } from "@air-jam/database-contract";
 import { and, count, eq, isNull, lte, ne, sql } from "drizzle-orm";
@@ -58,6 +59,7 @@ export type RealtimeAdmissionDecision<TLease> =
 export type RealtimeAdmissionStatus = {
   contractVersion: typeof REALTIME_ADMISSION_POLICY.contractVersion;
   authority: "database" | "local" | "unavailable";
+  budgetRequirement: OperationalBudgetRequirement;
   instanceId: string;
   acceptingNewWork: boolean;
   draining: boolean;
@@ -170,6 +172,7 @@ export class DatabaseRealtimeAdmissionService implements RealtimeAdmissionServic
   private readonly logger: ServerLogger;
   private readonly instanceId: string;
   private readonly instanceLeaseToken = createLeaseToken();
+  private readonly budgetRequirement: OperationalBudgetRequirement;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private registered = false;
   private leaseLost = false;
@@ -200,14 +203,17 @@ export class DatabaseRealtimeAdmissionService implements RealtimeAdmissionServic
     database,
     logger,
     instanceId = `realtime-${crypto.randomUUID()}`,
+    budgetRequirement,
   }: {
     database: ServerDatabase;
     logger: ServerLogger;
     instanceId?: string;
+    budgetRequirement: OperationalBudgetRequirement;
   }) {
     this.database = database;
     this.logger = logger;
     this.instanceId = instanceId;
+    this.budgetRequirement = budgetRequirement;
   }
 
   async start(): Promise<void> {
@@ -367,7 +373,7 @@ export class DatabaseRealtimeAdmissionService implements RealtimeAdmissionServic
           database: transaction,
           lane: "realtime_room_admission",
         });
-        const laneDecision = decideOperationalAdmissionPolicy({
+        const laneDecision = this.decideAdmissionPolicy({
           lane: "realtime_room_admission",
           control,
           budget,
@@ -493,7 +499,7 @@ export class DatabaseRealtimeAdmissionService implements RealtimeAdmissionServic
           );
           const effectiveCreatorRooms =
             creatorRooms - (replacement?.creatorId === creatorId ? 1 : 0);
-          const creatorDecision = decideOperationalAdmissionPolicy({
+          const creatorDecision = this.decideAdmissionPolicy({
             lane: "realtime_room_admission",
             control,
             budget,
@@ -533,7 +539,7 @@ export class DatabaseRealtimeAdmissionService implements RealtimeAdmissionServic
           );
           const effectiveGameRooms =
             gameRooms - (replacement?.gameId === gameId ? 1 : 0);
-          const gameDecision = decideOperationalAdmissionPolicy({
+          const gameDecision = this.decideAdmissionPolicy({
             lane: "realtime_room_admission",
             control,
             budget,
@@ -844,7 +850,7 @@ export class DatabaseRealtimeAdmissionService implements RealtimeAdmissionServic
           database: transaction,
           lane: "realtime_controller_admission",
         });
-        const laneDecision = decideOperationalAdmissionPolicy({
+        const laneDecision = this.decideAdmissionPolicy({
           lane: "realtime_controller_admission",
           control,
           budget,
@@ -1037,6 +1043,7 @@ export class DatabaseRealtimeAdmissionService implements RealtimeAdmissionServic
     return {
       contractVersion: REALTIME_ADMISSION_POLICY.contractVersion,
       authority: this.available ? "database" : "unavailable",
+      budgetRequirement: this.budgetRequirement,
       instanceId: this.instanceId,
       acceptingNewWork: this.available && !this.draining,
       draining: this.draining,
@@ -1122,6 +1129,7 @@ export class DatabaseRealtimeAdmissionService implements RealtimeAdmissionServic
   }
 
   private async assertRegistrationAuthorityReady(): Promise<void> {
+    if (this.budgetRequirement === "not_applicable") return;
     const { budget } = await readAdmissionAuthority({
       database: this.database,
       lane: "realtime_room_admission",
@@ -1131,6 +1139,18 @@ export class DatabaseRealtimeAdmissionService implements RealtimeAdmissionServic
         `Realtime admission budget authority is ${budget.evidenceStatus}`,
       );
     }
+  }
+
+  private decideAdmissionPolicy(
+    input: Omit<
+      Parameters<typeof decideOperationalAdmissionPolicy>[0],
+      "budgetRequirement"
+    >,
+  ) {
+    return decideOperationalAdmissionPolicy({
+      ...input,
+      budgetRequirement: this.budgetRequirement,
+    });
   }
 
   private async heartbeat(): Promise<void> {
@@ -1512,6 +1532,7 @@ export const createLocalRealtimeAdmissionService = ({
     getStatus: () => ({
       contractVersion: REALTIME_ADMISSION_POLICY.contractVersion,
       authority: "local",
+      budgetRequirement: "not_applicable",
       instanceId,
       acceptingNewWork: !draining,
       draining,
@@ -1528,9 +1549,11 @@ export const createLocalRealtimeAdmissionService = ({
 export const createUnavailableRealtimeAdmissionService = ({
   instanceId = `unavailable-${crypto.randomUUID()}`,
   reason,
+  budgetRequirement,
 }: {
   instanceId?: string;
   reason: string;
+  budgetRequirement: OperationalBudgetRequirement;
 }): RealtimeAdmissionService => {
   const unavailable = async () =>
     denial(
@@ -1549,6 +1572,7 @@ export const createUnavailableRealtimeAdmissionService = ({
     getStatus: () => ({
       contractVersion: REALTIME_ADMISSION_POLICY.contractVersion,
       authority: "unavailable",
+      budgetRequirement,
       instanceId,
       acceptingNewWork: false,
       draining: false,

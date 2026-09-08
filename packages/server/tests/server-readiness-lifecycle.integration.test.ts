@@ -15,6 +15,7 @@ import { getHttpServerLoopbackUrl } from "./helpers/http-server-test-url";
 const healthyStatus = (): RealtimeAdmissionStatus => ({
   contractVersion: REALTIME_ADMISSION_POLICY.contractVersion,
   authority: "database",
+  budgetRequirement: "required",
   instanceId: "readiness-test",
   acceptingNewWork: true,
   draining: false,

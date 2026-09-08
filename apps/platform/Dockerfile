@@ -13,7 +13,7 @@
 # builds even when the install layer is invalidated, so package downloads
 # don't repeat from the registry.
 
-ARG NODE_IMAGE=node:20-bookworm-slim
+ARG NODE_IMAGE=node:22-bookworm-slim
 
 # ============================================================================
 # Stage 1: deps — install workspace dependencies

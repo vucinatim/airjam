@@ -118,6 +118,7 @@ describe("realtime admission socket boundary", () => {
     getStatus: () => ({
       contractVersion: 1,
       authority: "database",
+      budgetRequirement: "required",
       instanceId: "test-admission",
       acceptingNewWork: true,
       draining: false,

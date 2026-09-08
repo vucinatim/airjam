@@ -1,3 +1,4 @@
+import type { OperationalBudgetRequirement } from "@air-jam/database-contract";
 import { validateEnv } from "@air-jam/env";
 import {
   deploymentEnvironments,
@@ -15,6 +16,7 @@ export type ProxyHeaderTrustMode = "auto" | "enabled" | "disabled";
 export interface ServerEnvConfig {
   nodeEnv: string;
   operationalEnvironment: "production" | "preview" | "development" | "test";
+  operationalBudgetRequirement: OperationalBudgetRequirement;
   port: number;
   rateLimitWindowMs: number;
   hostRegistrationRateLimitMax: number;
@@ -244,6 +246,8 @@ export const loadServerEnv = (
   const isRailwayPreviewEnvironment =
     Boolean(railwayEnvironmentName) && railwayEnvironmentName !== "production";
   const operationalEnvironment = resolveDeploymentEnvironment(env);
+  const operationalBudgetRequirement: OperationalBudgetRequirement =
+    operationalEnvironment === "production" ? "required" : "not_applicable";
 
   const authMode = resolveAuthMode({
     configuredAuthMode: parsed.AIR_JAM_AUTH_MODE as AuthMode | undefined,
@@ -258,6 +262,7 @@ export const loadServerEnv = (
   return {
     nodeEnv,
     operationalEnvironment,
+    operationalBudgetRequirement,
     port: parsed.PORT,
     rateLimitWindowMs: parsed.AIR_JAM_RATE_LIMIT_WINDOW_MS,
     hostRegistrationRateLimitMax:

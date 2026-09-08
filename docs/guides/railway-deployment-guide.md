@@ -29,6 +29,12 @@ The production Railway project should contain four deployable services:
 3. `air-jam-release-browser-worker`
 4. `air-jam-platform-worker`
 
+The platform and realtime Dockerfiles use the repository's Node 22 runtime
+floor. The operational worker must remain attached to
+`/apps/platform/railway.worker.json` so its build, bundled entrypoint,
+readiness boundary, and watched paths are source-owned rather than duplicated
+in Railway service settings.
+
 Persistent infrastructure remains external:
 
 1. PostgreSQL on Railway
@@ -57,7 +63,13 @@ That means:
    literal: a PR environment generates new Postgres credentials, and a copied
    production connection string will fail authentication.
 4. `resolvePlatformDeploymentConfig` detects `RAILWAY_ENVIRONMENT_NAME != "production"` and forces `githubAuthEnabled = false`. Avoids the GitHub OAuth wildcard-callback problem and keeps preview auth simple.
-5. `.github/workflows/preview-comment.yml` polls Railway, resolves the platform service domain in the new environment, and posts a sticky preview-URL comment on the PR.
+5. The realtime server derives preview policy from the canonical deployment
+   environment resolver. Railway identity takes precedence over explicit local
+   overrides, so production cannot self-identify as preview. The server
+   requires the preview database for lane and capacity authority, while marking
+   production provider-budget evidence as `not_applicable`; preview workers do
+   not need production usage credentials to make realtime ready.
+6. `.github/workflows/preview-comment.yml` polls Railway, resolves the platform service domain in the new environment, and posts a sticky preview-URL comment on the PR.
 
 The workflow needs a single repo secret: `RAILWAY_PROJECT_TOKEN` (a Railway project-scoped token).
 

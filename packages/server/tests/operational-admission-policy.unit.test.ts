@@ -17,6 +17,45 @@ const control = (
 });
 
 describe("shared operational admission policy", () => {
+  it("keeps non-production budget out of scope without weakening lane or quota controls", () => {
+    expect(
+      decideOperationalAdmissionPolicy({
+        lane: "realtime_controller_admission",
+        control: control("normal"),
+        budget: { evidenceStatus: "missing", state: null },
+        budgetRequirement: "not_applicable",
+      }),
+    ).toMatchObject({ outcome: "allowed", quotaEnforced: false });
+
+    expect(
+      decideOperationalAdmissionPolicy({
+        lane: "realtime_controller_admission",
+        control: control("restricted"),
+        budget: { evidenceStatus: "missing", state: null },
+        budgetRequirement: "not_applicable",
+        quota: {
+          authorityAvailable: true,
+          current: 10,
+          limit: 10,
+          requestedAmount: 1,
+        },
+      }),
+    ).toMatchObject({
+      outcome: "denied",
+      reason: "quota_exceeded",
+      quotaEnforced: true,
+    });
+
+    expect(
+      decideOperationalAdmissionPolicy({
+        lane: "realtime_controller_admission",
+        control: control("paused"),
+        budget: { evidenceStatus: "missing", state: null },
+        budgetRequirement: "not_applicable",
+      }),
+    ).toMatchObject({ outcome: "denied", reason: "lane_paused" });
+  });
+
   it("reports enforced authority truthfully on every restricted denial path", () => {
     expect(
       decideOperationalAdmissionPolicy({

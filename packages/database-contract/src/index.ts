@@ -298,15 +298,19 @@ const operationalBudgetBlockedLanes: Readonly<
   ]),
 });
 
+export type OperationalBudgetRequirement = "required" | "not_applicable";
+
 export const decideOperationalAdmissionPolicy = ({
   lane,
   control,
   budget,
+  budgetRequirement = "required",
   quota = null,
 }: {
   lane: OperationalLane;
   control: OperationalLaneControlSnapshot | null;
   budget: Pick<OperationalBudgetAuthoritySnapshot, "evidenceStatus" | "state">;
+  budgetRequirement?: OperationalBudgetRequirement;
   quota?: {
     authorityAvailable: boolean;
     current: number | null;
@@ -337,11 +341,13 @@ export const decideOperationalAdmissionPolicy = ({
       "Projected quota usage exceeds the safe integer range.",
     );
   }
+  const applicableBudgetState =
+    budgetRequirement === "required" ? budget.state : null;
   const quotaEnforced =
     control?.mode === "restricted" ||
-    budget.state === "protection" ||
-    budget.state === "near_ceiling" ||
-    budget.state === "ceiling";
+    applicableBudgetState === "protection" ||
+    applicableBudgetState === "near_ceiling" ||
+    applicableBudgetState === "ceiling";
   const denied = (
     reason: Exclude<OperationalAdmissionPolicyReason, null>,
     retryAfterSeconds: number | null = null,
@@ -357,10 +363,16 @@ export const decideOperationalAdmissionPolicy = ({
   if (control.mode === "paused") {
     return denied("lane_paused", control.retryAfterSeconds);
   }
-  if (budget.evidenceStatus !== "fresh" || budget.state === null) {
+  if (
+    budgetRequirement === "required" &&
+    (budget.evidenceStatus !== "fresh" || budget.state === null)
+  ) {
     return denied("control_unavailable", 30);
   }
-  if (operationalBudgetBlockedLanes[budget.state].has(lane)) {
+  if (
+    applicableBudgetState !== null &&
+    operationalBudgetBlockedLanes[applicableBudgetState].has(lane)
+  ) {
     return denied("budget_protection");
   }
   if (quota && (!quota.authorityAvailable || quota.current === null)) {

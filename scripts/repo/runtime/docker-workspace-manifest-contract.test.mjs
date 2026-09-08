@@ -8,6 +8,9 @@ import { parse as parseYaml } from "yaml";
 import { repoRoot } from "../lib/paths.mjs";
 
 const workspaceConfigPath = path.join(repoRoot, "pnpm-workspace.yaml");
+const rootPackageJson = JSON.parse(
+  fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"),
+);
 
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
@@ -117,6 +120,28 @@ test("dependency-stage Dockerfiles copy every pnpm workspace manifest", () => {
       missing,
       [],
       `${dockerfilePath} would hide workspace dependencies from pnpm install`,
+    );
+  }
+});
+
+test("Node-based production Dockerfiles match the repository runtime floor", () => {
+  const minimumNodeMajor = Number.parseInt(
+    /^>=(\d+)/u.exec(rootPackageJson.engines?.node ?? "")?.[1] ?? "",
+    10,
+  );
+  assert.ok(
+    Number.isSafeInteger(minimumNodeMajor),
+    "root package must declare an exact minimum Node major",
+  );
+
+  for (const dockerfilePath of listDockerfiles(repoRoot)) {
+    const source = fs.readFileSync(path.join(repoRoot, dockerfilePath), "utf8");
+    const configuredMajor = /^ARG NODE_IMAGE=node:(\d+)-/mu.exec(source)?.[1];
+    if (!configuredMajor) continue;
+    assert.equal(
+      Number.parseInt(configuredMajor, 10),
+      minimumNodeMajor,
+      `${dockerfilePath} must use the repository minimum Node major`,
     );
   }
 });
