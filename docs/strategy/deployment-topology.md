@@ -276,10 +276,14 @@ The operational worker owns:
 5. `AIRJAM_RELEASES_BROWSER_ACCESS_TOKEN` when the browser worker requires it
 6. `OPENAI_API_KEY` only when moderation mode enables it
 7. `AIRJAM_PLATFORM_WORKER_CONTROL_TOKEN`
-8. optional `AIRJAM_PLATFORM_WORKER_*` scheduling and drain bounds
-9. the explicit `AIRJAM_SYNTHETIC_*` targets required by the enabled synthetic
+8. `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, and a sealed,
+   environment-scoped `RAILWAY_PROJECT_TOKEN` for budget evidence; never an
+   account token
+9. optional `AIRJAM_PLATFORM_WORKER_*` scheduling and drain bounds, including
+   the 15-minute budget-refresh cadence
+10. the explicit `AIRJAM_SYNTHETIC_*` targets required by the enabled synthetic
    catalog
-10. `AIRJAM_GITHUB_ISSUES_APP_ID`,
+11. `AIRJAM_GITHUB_ISSUES_APP_ID`,
     `AIRJAM_GITHUB_ISSUES_INSTALLATION_ID`,
     `AIRJAM_GITHUB_ISSUES_PRIVATE_KEY`, and
     `AIRJAM_GITHUB_ISSUES_REPOSITORY` for the repository-installed,
@@ -288,7 +292,10 @@ The operational worker owns:
 It should not receive Better Auth, the multiplayer master key, maintainer
 personal GitHub tokens, broad repository credentials, or creator-facing OAuth
 credentials. Synthetic public origins are inert check targets rather than
-application authority and remain explicitly configured.
+application authority and remain explicitly configured. PR and local workers
+leave budget refresh explicitly disabled unless they are intentionally given a
+separate, exactly attested project/environment token; they never inherit the
+production token.
 
 ## Recommended Hardening Path
 

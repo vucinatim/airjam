@@ -222,30 +222,6 @@ const attachPlatformRecoveryEvidence = ({ kind, result }) => {
   }
 };
 
-const capturePlatformDatabaseOperator = async ({
-  script,
-  operation,
-  options,
-}) => {
-  const invocation = await platformDatabaseOperatorInvocation({
-    script,
-    operation,
-    options,
-  });
-  const result = runCommandResult("pnpm", invocation.args, {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: invocation.env,
-    maxBuffer: 20 * 1024 * 1024,
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(
-      result.stderr?.trim() || "Platform database operation failed.",
-    );
-  }
-  return result.stdout;
-};
-
 const resolveDomainHostname = (value) => {
   if (typeof value !== "string" || !value.trim()) return null;
   try {
@@ -479,20 +455,6 @@ const addPlatformDatabaseTargetOption = (command) =>
       "--railway-project <id>",
       "Railway project id; defaults to RAILWAY_PROJECT_ID",
     );
-
-export const collectRailwayProjectBudgetEvidence = async (
-  { projectId },
-  { createClient = createRailwayApiClient } = {},
-) => {
-  if (!projectId?.trim()) {
-    throw new Error(
-      "Budget sync requires --railway-project or RAILWAY_PROJECT_ID.",
-    );
-  }
-  return createClient().getProjectUsageEvidence({
-    projectId: projectId.trim(),
-  });
-};
 
 export const registerPlatformCommands = (program) => {
   const platformCommand = program
@@ -1516,36 +1478,24 @@ export const registerPlatformCommands = (program) => {
   ).action(async (options) => {
     const projectId =
       options.railwayProject ?? process.env.RAILWAY_PROJECT_ID ?? null;
+    const environmentId =
+      options.railwayEnvironment ?? process.env.RAILWAY_ENVIRONMENT_ID ?? null;
     if (!projectId?.trim()) {
       throw new Error(
         "Budget sync requires --railway-project or RAILWAY_PROJECT_ID.",
       );
     }
-    const replayOutput = await capturePlatformDatabaseOperator({
-      script: "scripts/production-control-cli.ts",
-      operation: {
-        command: "budget-replay",
-        provider: "railway",
-        scopeKind: "project",
-        scopeId: projectId.trim(),
-        reason: options.reason,
-        actor: options.actor,
-        idempotencyKey: options.idempotencyKey,
-        json: true,
-      },
-      options,
-    });
-    const replay = JSON.parse(replayOutput);
-    if (replay?.result?.replayed === true) {
-      process.stdout.write(replayOutput);
-      return;
+    if (!environmentId?.trim()) {
+      throw new Error(
+        "Budget sync requires --railway-environment or RAILWAY_ENVIRONMENT_ID for exact token attestation.",
+      );
     }
-    const evidence = await collectRailwayProjectBudgetEvidence({ projectId });
     await runPlatformOperator({
       script: "scripts/production-control-cli.ts",
       operation: {
         command: "budget-sync",
-        evidence,
+        projectId: projectId.trim(),
+        environmentId: environmentId.trim(),
         reason: options.reason,
         actor: options.actor,
         idempotencyKey: options.idempotencyKey,

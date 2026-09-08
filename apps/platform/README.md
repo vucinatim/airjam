@@ -258,6 +258,15 @@ Production uses the bundled `worker:start` entry and
 recent PostgreSQL authority, and authenticated `POST /drain` stops new claims
 before deploy termination.
 
+Production also requires `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, and a
+sealed, environment-scoped `RAILWAY_PROJECT_TOKEN` on this worker only. The
+worker exactly attests the token's project/environment identity, refreshes
+Railway budget evidence immediately and every 15 minutes, and coordinates
+overlapping replicas with PostgreSQL. Missing or stale persisted evidence keeps
+`/ready` unavailable. A failed provider attempt remains visible without
+degrading readiness while retained evidence is still fresh. Local and preview
+workers default `AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MODE` to disabled.
+
 The same worker schedules retention-eligible release-generation and managed
 media cleanup. `AIRJAM_PLATFORM_WORKER_LIFECYCLE_CLEANUP_MS` controls the
 schedule interval and defaults to 15 minutes. It also applies the canonical

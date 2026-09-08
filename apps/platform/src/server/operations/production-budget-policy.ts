@@ -1,6 +1,11 @@
 import {
+  deriveOperationalBudgetAuthoritySnapshot,
+  OPERATIONAL_BUDGET_EVIDENCE_MAX_AGE_MS,
   operationalBudgetEvidenceContractVersion,
+  resolveOperationalBudgetStateFromCycle,
+  selectLatestOperationalBudgetEvidence,
   type OperationalBudgetCycleSnapshot,
+  type OperationalBudgetEvidenceStatus,
   type OperationalBudgetEvidenceSnapshot,
   type OperationalBudgetProfile,
   type OperationalBudgetState,
@@ -8,7 +13,8 @@ import {
 import { isDeepStrictEqual } from "node:util";
 
 export const PRODUCTION_BUDGET_CONTRACT_VERSION = 1 as const;
-export const PRODUCTION_BUDGET_EVIDENCE_MAX_AGE_MS = 6 * 60 * 60 * 1_000;
+export const PRODUCTION_BUDGET_EVIDENCE_MAX_AGE_MS =
+  OPERATIONAL_BUDGET_EVIDENCE_MAX_AGE_MS;
 export const PRODUCTION_BUDGET_MAX_FUTURE_SKEW_MS = 5 * 60 * 1_000;
 
 // Activating the one-cycle launch allowance is a reviewed source change. It
@@ -96,7 +102,7 @@ export type ReplayOperationalBudgetEvidenceInput = {
   idempotencyKey: string;
 };
 
-export type OperationalBudgetEvidenceStatus = "fresh" | "stale" | "missing";
+export type { OperationalBudgetEvidenceStatus } from "@air-jam/database-contract";
 
 export type OperationalBudgetStatus = {
   contractVersion: typeof PRODUCTION_BUDGET_CONTRACT_VERSION;
@@ -377,13 +383,8 @@ export const resolveOperationalBudgetState = ({
 }: {
   amountMicrousd: number;
   cycle: OperationalBudgetCycleSnapshot;
-}): OperationalBudgetState => {
-  if (amountMicrousd >= cycle.ceilingMicrousd) return "ceiling";
-  if (amountMicrousd >= cycle.nearCeilingMicrousd) return "near_ceiling";
-  if (amountMicrousd >= cycle.protectionMicrousd) return "protection";
-  if (amountMicrousd >= cycle.warningMicrousd) return "warning";
-  return "normal";
-};
+}): OperationalBudgetState =>
+  resolveOperationalBudgetStateFromCycle({ amountMicrousd, cycle });
 
 export const buildOperationalBudgetCycleSnapshot = ({
   periodStart,
@@ -481,30 +482,6 @@ export const assertMatchingOperationalBudgetEvidence = (
   }
 };
 
-const evidenceSourceKey = (evidence: OperationalBudgetEvidenceSnapshot) =>
-  `${evidence.provider}\u0000${evidence.scopeKind}\u0000${evidence.scopeId}`;
-
-const selectLatestSourceEvidence = (
-  rows: OperationalBudgetEvidenceSnapshot[],
-): OperationalBudgetEvidenceSnapshot[] => {
-  const latest = new Map<string, OperationalBudgetEvidenceSnapshot>();
-  for (const row of rows) {
-    const key = evidenceSourceKey(row);
-    const current = latest.get(key);
-    if (
-      !current ||
-      row.observedAt > current.observedAt ||
-      (row.observedAt === current.observedAt &&
-        row.createdAt > current.createdAt)
-    ) {
-      latest.set(key, row);
-    }
-  }
-  return [...latest.values()].sort((a, b) =>
-    evidenceSourceKey(a).localeCompare(evidenceSourceKey(b)),
-  );
-};
-
 export const buildOperationalBudgetStatus = ({
   cycle,
   evidence,
@@ -516,85 +493,30 @@ export const buildOperationalBudgetStatus = ({
   asOf: Date;
   maxEvidenceAgeMs?: number;
 }): OperationalBudgetStatus => {
-  if (Number.isNaN(asOf.getTime())) {
-    throw new OperationalBudgetConflictError(
-      "Budget status time must be valid.",
-    );
-  }
-  if (!Number.isFinite(maxEvidenceAgeMs) || maxEvidenceAgeMs < 0) {
-    throw new OperationalBudgetConflictError(
-      "Budget evidence maximum age must be a non-negative finite number.",
-    );
-  }
-  if (!cycle || evidence.length === 0) {
+  try {
+    const authority = deriveOperationalBudgetAuthoritySnapshot({
+      cycle,
+      evidence,
+      asOf,
+      maxEvidenceAgeMs,
+    });
+    const selectedEvidence = cycle
+      ? selectLatestOperationalBudgetEvidence(evidence)
+      : [];
     return {
       contractVersion: PRODUCTION_BUDGET_CONTRACT_VERSION,
       asOf: asOf.toISOString(),
-      evidenceStatus: "missing",
+      ...authority,
       cycle,
-      state: null,
-      projectedState: null,
-      lastKnownState: null,
-      lastKnownProjectedState: null,
-      actualAmountMicrousd: null,
-      projectedAmountMicrousd: null,
-      headroomMicrousd: cycle?.ceilingMicrousd ?? null,
-      oldestSourceObservedAt: null,
-      newestSourceObservedAt: null,
-      evidence: [],
+      headroomMicrousd:
+        cycle && authority.actualAmountMicrousd !== null
+          ? cycle.ceilingMicrousd - authority.actualAmountMicrousd
+          : (cycle?.ceilingMicrousd ?? null),
+      evidence: selectedEvidence,
     };
-  }
-
-  const latestEvidence = selectLatestSourceEvidence(evidence);
-  const observedTimes = latestEvidence.map((row) =>
-    new Date(row.observedAt).getTime(),
-  );
-  if (observedTimes.some(Number.isNaN)) {
+  } catch (error) {
     throw new OperationalBudgetConflictError(
-      "Stored budget evidence contains an invalid observedAt value.",
+      error instanceof Error ? error.message : String(error),
     );
   }
-  const oldestObservedAt = Math.min(...observedTimes);
-  const newestObservedAt = Math.max(...observedTimes);
-  const stale = asOf.getTime() - oldestObservedAt > maxEvidenceAgeMs;
-  const actualAmountMicrousd = latestEvidence.reduce(
-    (total, row) => total + row.actualAmountMicrousd,
-    0,
-  );
-  const projectedAmountMicrousd = latestEvidence.every(
-    (row) => row.projectedAmountMicrousd !== null,
-  )
-    ? latestEvidence.reduce(
-        (total, row) => total + (row.projectedAmountMicrousd ?? 0),
-        0,
-      )
-    : null;
-  const lastKnownState = resolveOperationalBudgetState({
-    amountMicrousd: actualAmountMicrousd,
-    cycle,
-  });
-  const lastKnownProjectedState =
-    projectedAmountMicrousd === null
-      ? null
-      : resolveOperationalBudgetState({
-          amountMicrousd: projectedAmountMicrousd,
-          cycle,
-        });
-
-  return {
-    contractVersion: PRODUCTION_BUDGET_CONTRACT_VERSION,
-    asOf: asOf.toISOString(),
-    evidenceStatus: stale ? "stale" : "fresh",
-    cycle,
-    state: stale ? null : lastKnownState,
-    projectedState: stale ? null : lastKnownProjectedState,
-    lastKnownState,
-    lastKnownProjectedState,
-    actualAmountMicrousd,
-    projectedAmountMicrousd,
-    headroomMicrousd: cycle.ceilingMicrousd - actualAmountMicrousd,
-    oldestSourceObservedAt: new Date(oldestObservedAt).toISOString(),
-    newestSourceObservedAt: new Date(newestObservedAt).toISOString(),
-    evidence: latestEvidence,
-  };
 };

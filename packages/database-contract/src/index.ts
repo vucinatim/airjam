@@ -7,7 +7,7 @@ import {
   type OperationalSloEvaluationV1,
   type OperationalSyntheticRunV1,
 } from "@air-jam/operations-contract";
-import { sql } from "drizzle-orm";
+import { and, desc, eq, gt, lte, sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -23,6 +23,7 @@ import {
   uniqueIndex,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
 export const operationalLaneValues = [
   "game_creation",
@@ -208,6 +209,36 @@ export type OperationalQuotaPolicySnapshot = {
   limit: number;
 };
 
+export const operationalBudgetEvidenceStatusValues = [
+  "fresh",
+  "stale",
+  "missing",
+] as const;
+
+export type OperationalBudgetEvidenceStatus =
+  (typeof operationalBudgetEvidenceStatusValues)[number];
+
+export const OPERATIONAL_BUDGET_EVIDENCE_MAX_AGE_MS = 6 * 60 * 60 * 1_000;
+
+export type OperationalBudgetAuthoritySnapshot = {
+  evidenceStatus: OperationalBudgetEvidenceStatus;
+  state: OperationalBudgetState | null;
+  projectedState: OperationalBudgetState | null;
+  lastKnownState: OperationalBudgetState | null;
+  lastKnownProjectedState: OperationalBudgetState | null;
+  actualAmountMicrousd: number | null;
+  projectedAmountMicrousd: number | null;
+  oldestSourceObservedAt: string | null;
+  newestSourceObservedAt: string | null;
+};
+
+export class OperationalAdmissionPolicyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OperationalAdmissionPolicyError";
+  }
+}
+
 export const operationalBudgetEvidenceContractVersion = 1 as const;
 
 const operationalBudgetEvidenceContractVersionSql = sql.raw(
@@ -252,6 +283,130 @@ export type OperationalBudgetEvidenceSnapshot = {
   collectedBy: string;
   reason: string;
   createdAt: string;
+};
+
+const operationalBudgetEvidenceSourceKey = (
+  evidence: OperationalBudgetEvidenceSnapshot,
+): string =>
+  `${evidence.provider}\u0000${evidence.scopeKind}\u0000${evidence.scopeId}`;
+
+export const selectLatestOperationalBudgetEvidence = (
+  rows: readonly OperationalBudgetEvidenceSnapshot[],
+): OperationalBudgetEvidenceSnapshot[] => {
+  const latest = new Map<string, OperationalBudgetEvidenceSnapshot>();
+  for (const row of rows) {
+    const key = operationalBudgetEvidenceSourceKey(row);
+    const current = latest.get(key);
+    if (
+      !current ||
+      row.observedAt > current.observedAt ||
+      (row.observedAt === current.observedAt &&
+        row.createdAt > current.createdAt)
+    ) {
+      latest.set(key, row);
+    }
+  }
+  return [...latest.values()].sort((left, right) =>
+    operationalBudgetEvidenceSourceKey(left).localeCompare(
+      operationalBudgetEvidenceSourceKey(right),
+    ),
+  );
+};
+
+export const resolveOperationalBudgetStateFromCycle = ({
+  amountMicrousd,
+  cycle,
+}: {
+  amountMicrousd: number;
+  cycle: OperationalBudgetCycleSnapshot;
+}): OperationalBudgetState => {
+  if (amountMicrousd >= cycle.ceilingMicrousd) return "ceiling";
+  if (amountMicrousd >= cycle.nearCeilingMicrousd) return "near_ceiling";
+  if (amountMicrousd >= cycle.protectionMicrousd) return "protection";
+  if (amountMicrousd >= cycle.warningMicrousd) return "warning";
+  return "normal";
+};
+
+export const deriveOperationalBudgetAuthoritySnapshot = ({
+  cycle,
+  evidence,
+  asOf,
+  maxEvidenceAgeMs = OPERATIONAL_BUDGET_EVIDENCE_MAX_AGE_MS,
+}: {
+  cycle: OperationalBudgetCycleSnapshot | null;
+  evidence: readonly OperationalBudgetEvidenceSnapshot[];
+  asOf: Date;
+  maxEvidenceAgeMs?: number;
+}): OperationalBudgetAuthoritySnapshot => {
+  if (Number.isNaN(asOf.getTime())) {
+    throw new OperationalAdmissionPolicyError(
+      "Budget status time must be valid.",
+    );
+  }
+  if (!Number.isFinite(maxEvidenceAgeMs) || maxEvidenceAgeMs < 0) {
+    throw new OperationalAdmissionPolicyError(
+      "Budget evidence maximum age must be a non-negative finite number.",
+    );
+  }
+  if (!cycle || evidence.length === 0) {
+    return {
+      evidenceStatus: "missing",
+      state: null,
+      projectedState: null,
+      lastKnownState: null,
+      lastKnownProjectedState: null,
+      actualAmountMicrousd: null,
+      projectedAmountMicrousd: null,
+      oldestSourceObservedAt: null,
+      newestSourceObservedAt: null,
+    };
+  }
+
+  const latestEvidence = selectLatestOperationalBudgetEvidence(evidence);
+  const observedTimes = latestEvidence.map((row) => Date.parse(row.observedAt));
+  if (observedTimes.some(Number.isNaN)) {
+    throw new OperationalAdmissionPolicyError(
+      "Stored budget evidence contains an invalid observedAt value.",
+    );
+  }
+  const oldestObservedAt = Math.min(...observedTimes);
+  const newestObservedAt = Math.max(...observedTimes);
+  const stale = asOf.getTime() - oldestObservedAt > maxEvidenceAgeMs;
+  const actualAmountMicrousd = latestEvidence.reduce(
+    (total, row) => total + row.actualAmountMicrousd,
+    0,
+  );
+  const projectedAmountMicrousd = latestEvidence.every(
+    (row) => row.projectedAmountMicrousd !== null,
+  )
+    ? latestEvidence.reduce(
+        (total, row) => total + (row.projectedAmountMicrousd ?? 0),
+        0,
+      )
+    : null;
+  const lastKnownState = resolveOperationalBudgetStateFromCycle({
+    amountMicrousd: actualAmountMicrousd,
+    cycle,
+  });
+  const lastKnownProjectedState =
+    projectedAmountMicrousd === null
+      ? null
+      : resolveOperationalBudgetStateFromCycle({
+          amountMicrousd: projectedAmountMicrousd,
+          cycle,
+        });
+
+  return {
+    evidenceStatus: stale ? "stale" : "fresh",
+    state: stale ? null : lastKnownState,
+    projectedState: stale ? null : lastKnownProjectedState,
+    lastKnownState,
+    lastKnownProjectedState,
+    actualAmountMicrousd,
+    projectedAmountMicrousd,
+    oldestSourceObservedAt: new Date(oldestObservedAt).toISOString(),
+    newestSourceObservedAt: new Date(newestObservedAt).toISOString(),
+  };
 };
 
 export type RuntimeDatabaseSchemaOptions = {
@@ -1030,9 +1185,7 @@ export const createRuntimeDatabaseSchema = ({
       alertKey: text("alert_key").notNull(),
       repository: text("repository").notNull(),
       targetAlertRevision: integer("target_alert_revision").notNull(),
-      targetAlert: jsonb("target_alert")
-        .$type<OperationalAlertV1>()
-        .notNull(),
+      targetAlert: jsonb("target_alert").$type<OperationalAlertV1>().notNull(),
       projectedAlertRevision: integer("projected_alert_revision")
         .default(0)
         .notNull(),
@@ -1177,3 +1330,187 @@ export const createRuntimeDatabaseSchema = ({
 export type RuntimeDatabaseSchema = ReturnType<
   typeof createRuntimeDatabaseSchema
 >;
+
+type OperationalSelectDatabase = Pick<PostgresJsDatabase, "select">;
+type OperationalAuthorityDatabase = OperationalSelectDatabase &
+  Pick<PostgresJsDatabase, "execute">;
+
+export type OperationalBudgetTables = Pick<
+  RuntimeDatabaseSchema,
+  "operationalBudgetCycles" | "operationalBudgetEvidence"
+>;
+
+export type OperationalLaneControlTables = Pick<
+  RuntimeDatabaseSchema,
+  "operationalLaneControls"
+>;
+
+export type OperationalAuthorityTables = OperationalBudgetTables &
+  OperationalLaneControlTables;
+
+export const serializeOperationalBudgetCycle = (
+  row: RuntimeDatabaseSchema["operationalBudgetCycles"]["$inferSelect"],
+): OperationalBudgetCycleSnapshot => ({
+  id: row.id,
+  periodStart: row.periodStart.toISOString(),
+  periodEnd: row.periodEnd.toISOString(),
+  profile: row.profile,
+  normalTargetMicrousd: row.normalTargetMicrousd,
+  warningMicrousd: row.warningMicrousd,
+  protectionMicrousd: row.protectionMicrousd,
+  nearCeilingMicrousd: row.nearCeilingMicrousd,
+  ceilingMicrousd: row.ceilingMicrousd,
+  createdAt: row.createdAt.toISOString(),
+});
+
+export const serializeOperationalBudgetEvidence = (
+  row: RuntimeDatabaseSchema["operationalBudgetEvidence"]["$inferSelect"],
+): OperationalBudgetEvidenceSnapshot => ({
+  id: row.id,
+  idempotencyKey: row.idempotencyKey,
+  cycleId: row.cycleId,
+  contractVersion: row.contractVersion,
+  provider: row.provider,
+  scopeKind: row.scopeKind,
+  scopeId: row.scopeId,
+  scopeName: row.scopeName,
+  scopeMetadata: row.scopeMetadata,
+  currency: row.currency,
+  observedAt: row.observedAt.toISOString(),
+  actualAmountMicrousd: row.actualAmountMicrousd,
+  projectedAmountMicrousd: row.projectedAmountMicrousd,
+  measurements: row.measurements,
+  costBreakdownMicrousd: row.costBreakdownMicrousd,
+  rateCard: row.rateCard,
+  sourceVersion: row.sourceVersion,
+  collectedBy: row.collectedBy,
+  reason: row.reason,
+  createdAt: row.createdAt.toISOString(),
+});
+
+export const serializeOperationalLaneControl = (
+  row: RuntimeDatabaseSchema["operationalLaneControls"]["$inferSelect"],
+): OperationalLaneControlSnapshot => ({
+  lane: row.lane,
+  mode: row.mode,
+  reason: row.reason,
+  retryAfterSeconds: row.retryAfterSeconds,
+  revision: row.revision,
+  updatedBy: row.updatedBy,
+  updatedAt: row.updatedAt.toISOString(),
+});
+
+export const getDefaultOperationalLaneControl = (
+  lane: OperationalLane,
+): OperationalLaneControlSnapshot => ({
+  lane,
+  mode: "normal",
+  reason: null,
+  retryAfterSeconds: null,
+  revision: 0,
+  updatedBy: null,
+  updatedAt: null,
+});
+
+const readOperationalAuthorityClock = async (
+  database: Pick<OperationalAuthorityDatabase, "execute">,
+): Promise<Date> => {
+  const rows = await database.execute(
+    sql<{
+      observedAt: Date | string;
+    }>`select transaction_timestamp() as "observedAt"`,
+  );
+  const value = rows[0]?.observedAt;
+  const observedAt =
+    value instanceof Date ? value : new Date(String(value ?? ""));
+  if (Number.isNaN(observedAt.getTime())) {
+    throw new OperationalAdmissionPolicyError(
+      "PostgreSQL did not return the operational authority snapshot clock.",
+    );
+  }
+  return observedAt;
+};
+
+export const readOperationalBudgetSnapshot = async ({
+  database,
+  tables,
+  asOf,
+}: {
+  database: OperationalSelectDatabase;
+  tables: OperationalBudgetTables;
+  asOf: Date;
+}): Promise<{
+  cycle: OperationalBudgetCycleSnapshot | null;
+  evidence: OperationalBudgetEvidenceSnapshot[];
+}> => {
+  const [cycleRow] = await database
+    .select()
+    .from(tables.operationalBudgetCycles)
+    .where(
+      and(
+        lte(tables.operationalBudgetCycles.periodStart, asOf),
+        gt(tables.operationalBudgetCycles.periodEnd, asOf),
+      ),
+    )
+    .orderBy(desc(tables.operationalBudgetCycles.periodStart))
+    .limit(1);
+  const evidenceRows = cycleRow
+    ? await database
+        .select()
+        .from(tables.operationalBudgetEvidence)
+        .where(eq(tables.operationalBudgetEvidence.cycleId, cycleRow.id))
+    : [];
+  const cycle = cycleRow ? serializeOperationalBudgetCycle(cycleRow) : null;
+  const evidence = evidenceRows.map(serializeOperationalBudgetEvidence);
+  return { cycle, evidence };
+};
+
+export const readOperationalLaneControl = async ({
+  database,
+  tables,
+  lane,
+}: {
+  database: OperationalSelectDatabase;
+  tables: OperationalLaneControlTables;
+  lane: OperationalLane;
+}): Promise<OperationalLaneControlSnapshot> => {
+  const [row] = await database
+    .select()
+    .from(tables.operationalLaneControls)
+    .where(eq(tables.operationalLaneControls.lane, lane))
+    .limit(1);
+  return row
+    ? serializeOperationalLaneControl(row)
+    : getDefaultOperationalLaneControl(lane);
+};
+
+export const readOperationalAuthoritySnapshot = async ({
+  database,
+  tables,
+  lane,
+  asOf,
+}: {
+  database: OperationalAuthorityDatabase;
+  tables: OperationalAuthorityTables;
+  lane: OperationalLane;
+  asOf?: Date;
+}): Promise<{
+  observedAt: Date;
+  control: OperationalLaneControlSnapshot;
+  budget: OperationalBudgetAuthoritySnapshot;
+}> => {
+  const observedAt = asOf ?? (await readOperationalAuthorityClock(database));
+  const [control, budget] = await Promise.all([
+    readOperationalLaneControl({ database, tables, lane }),
+    readOperationalBudgetSnapshot({ database, tables, asOf: observedAt }),
+  ]);
+  return {
+    observedAt,
+    control,
+    budget: deriveOperationalBudgetAuthoritySnapshot({
+      cycle: budget.cycle,
+      evidence: budget.evidence,
+      asOf: observedAt,
+    }),
+  };
+};

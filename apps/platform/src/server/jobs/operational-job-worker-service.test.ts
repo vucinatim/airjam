@@ -6,6 +6,7 @@ import {
   startOperationalJobWorkerService,
   type OperationalJobWorkerServiceHandle,
 } from "./operational-job-worker-service";
+import type { OperationalBudgetStatus } from "../operations/production-budget-service";
 
 const readCompatibleSchema = async () => ({
   contractVersion: 1 as const,
@@ -24,6 +25,37 @@ const telemetryRetentionResult = () => ({
   sessionContributionsDeleted: 0,
   rawCutoff: new Date("2026-01-01T00:00:00.000Z"),
   sessionContributionCutoffDate: "2026-01-01",
+});
+
+const budgetStatus = (
+  evidenceStatus: OperationalBudgetStatus["evidenceStatus"],
+): OperationalBudgetStatus => ({
+  contractVersion: 1,
+  asOf: "2026-09-08T12:00:00.000Z",
+  evidenceStatus,
+  cycle: null,
+  state: evidenceStatus === "fresh" ? "normal" : null,
+  projectedState: evidenceStatus === "fresh" ? "normal" : null,
+  lastKnownState: evidenceStatus === "missing" ? null : "normal",
+  lastKnownProjectedState: evidenceStatus === "missing" ? null : "normal",
+  actualAmountMicrousd: evidenceStatus === "fresh" ? 1_000_000 : null,
+  projectedAmountMicrousd: evidenceStatus === "fresh" ? 2_000_000 : null,
+  headroomMicrousd: evidenceStatus === "fresh" ? 99_000_000 : null,
+  oldestSourceObservedAt:
+    evidenceStatus === "missing" ? null : "2026-09-08T11:55:00.000Z",
+  newestSourceObservedAt:
+    evidenceStatus === "missing" ? null : "2026-09-08T11:55:00.000Z",
+  evidence:
+    evidenceStatus === "missing"
+      ? []
+      : [
+          {
+            provider: "railway",
+            scopeKind: "project",
+            scopeId: "project-1",
+            observedAt: "2026-09-08T11:55:00.000Z",
+          } as OperationalBudgetStatus["evidence"][number],
+        ],
 });
 
 const deferred = <T>() => {
@@ -78,6 +110,8 @@ describe("operational job worker service", () => {
       workerId: "worker:test",
       maxInFlight: 7,
       telemetryRetentionMs: 900_000,
+      budgetRefreshEnabled: false,
+      budgetRefreshMs: 900_000,
     });
     expect(() =>
       loadOperationalJobWorkerServiceConfig({
@@ -89,11 +123,185 @@ describe("operational job worker service", () => {
         RAILWAY_ENVIRONMENT_NAME: "production",
       }),
     ).toThrow(/invalid environment configuration/i);
+    expect(
+      loadOperationalJobWorkerServiceConfig({
+        RAILWAY_ENVIRONMENT_NAME: "production",
+        AIRJAM_PLATFORM_WORKER_CONTROL_TOKEN: "control-token",
+        RAILWAY_PROJECT_ID: "project-1",
+        RAILWAY_ENVIRONMENT_ID: "environment-1",
+        RAILWAY_PROJECT_TOKEN: "project-token",
+      }),
+    ).toMatchObject({
+      budgetRefreshEnabled: true,
+      budgetRefreshMs: 900_000,
+      railwayProjectId: "project-1",
+      railwayEnvironmentId: "environment-1",
+    });
+    expect(() =>
+      loadOperationalJobWorkerServiceConfig({
+        RAILWAY_ENVIRONMENT_NAME: "production",
+        AIRJAM_PLATFORM_WORKER_CONTROL_TOKEN: "control-token",
+        RAILWAY_PROJECT_ID: "project-1",
+        RAILWAY_ENVIRONMENT_ID: "environment-1",
+        RAILWAY_API_TOKEN: "account-token",
+      }),
+    ).toThrow(/invalid environment configuration/i);
     expect(() =>
       loadOperationalJobWorkerServiceConfig({
         AIRJAM_PLATFORM_WORKER_ID: "worker with spaces",
       }),
     ).toThrow(/invalid environment configuration/i);
+  });
+
+  it("keeps fresh persisted budget authority ready when provider refresh fails", async () => {
+    const port = await reservePort();
+    handle = await startOperationalJobWorkerService({
+      readSchemaCompatibility: readCompatibleSchema,
+      env: {
+        AIRJAM_PLATFORM_WORKER_HOST: "127.0.0.1",
+        AIRJAM_PLATFORM_WORKER_PORT: String(port),
+        AIRJAM_PLATFORM_WORKER_ID: "worker:budget-retained",
+        AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MODE: "enabled",
+        AIRJAM_PLATFORM_WORKER_POLL_MS: "60000",
+        AIRJAM_PLATFORM_WORKER_REPAIR_MS: "60000",
+        AIRJAM_PLATFORM_WORKER_LIFECYCLE_CLEANUP_MS: "60000",
+        AIRJAM_PLATFORM_WORKER_TELEMETRY_RETENTION_MS: "60000",
+        AIRJAM_PLATFORM_WORKER_EVENT_DELIVERY_MS: "60000",
+        AIRJAM_PLATFORM_WORKER_SYNTHETIC_MS: "60000",
+        AIRJAM_PLATFORM_WORKER_ISSUE_PROJECTION_MS: "60000",
+        RAILWAY_PROJECT_ID: "project-1",
+        RAILWAY_ENVIRONMENT_ID: "environment-1",
+        RAILWAY_PROJECT_TOKEN: "project-token",
+      },
+      runCycle: async ({ kind }) => ({ status: "idle", kind }),
+      repair: async () => ({ replayed: false, jobs: [] }),
+      cleanup: async () => ({ candidates: [], cleaned: [] }),
+      scheduleCleanup: async () => ({ candidates: [], jobs: [] }),
+      retainTelemetry: async () => telemetryRetentionResult(),
+      deliverEvent: async () => ({ status: "idle" }),
+      repairEventDelivery: async () => [],
+      runSynthetics: async () => ({
+        environment: "test",
+        scheduledAt: new Date().toISOString(),
+        dueCount: 0,
+        completedCount: 0,
+        failureCount: 0,
+        staleIgnoredCount: 0,
+        skippedCount: 0,
+        checks: [],
+      }),
+      refreshBudgetEvidence: async () => {
+        throw new Error("provider unavailable");
+      },
+      inspectBudgetEvidence: async () => budgetStatus("fresh"),
+    });
+
+    let ready: Awaited<ReturnType<typeof readJson>> | null = null;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      ready = await readJson(
+        await fetch(`http://127.0.0.1:${port}/ready`),
+      );
+      if (ready.status === 200) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(ready).toMatchObject({
+      status: 200,
+      body: {
+        authorityReady: true,
+        budgetRefreshConfigured: true,
+        lastBudgetRefreshStatus: "failed",
+        lastBudgetRefreshErrorCode: "Error",
+        budgetStatus: { evidenceStatus: "fresh" },
+        authorities: { budgetEvidence: { status: "ready" } },
+      },
+    });
+  });
+
+  it("keeps missing budget evidence unready and drains an in-flight refresh", async () => {
+    const port = await reservePort();
+    const refresh = deferred<never>();
+    let refreshAttempts = 0;
+    handle = await startOperationalJobWorkerService({
+      readSchemaCompatibility: readCompatibleSchema,
+      env: {
+        AIRJAM_PLATFORM_WORKER_HOST: "127.0.0.1",
+        AIRJAM_PLATFORM_WORKER_PORT: String(port),
+        AIRJAM_PLATFORM_WORKER_ID: "worker:budget-drain",
+        AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MODE: "enabled",
+        AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MS: "500",
+        AIRJAM_PLATFORM_WORKER_POLL_MS: "60000",
+        AIRJAM_PLATFORM_WORKER_REPAIR_MS: "60000",
+        AIRJAM_PLATFORM_WORKER_LIFECYCLE_CLEANUP_MS: "60000",
+        AIRJAM_PLATFORM_WORKER_TELEMETRY_RETENTION_MS: "60000",
+        AIRJAM_PLATFORM_WORKER_EVENT_DELIVERY_MS: "60000",
+        AIRJAM_PLATFORM_WORKER_SYNTHETIC_MS: "60000",
+        AIRJAM_PLATFORM_WORKER_ISSUE_PROJECTION_MS: "60000",
+        AIRJAM_PLATFORM_WORKER_DRAIN_TIMEOUT_MS: "1000",
+        RAILWAY_PROJECT_ID: "project-1",
+        RAILWAY_ENVIRONMENT_ID: "environment-1",
+        RAILWAY_PROJECT_TOKEN: "project-token",
+      },
+      runCycle: async ({ kind }) => ({ status: "idle", kind }),
+      repair: async () => ({ replayed: false, jobs: [] }),
+      cleanup: async () => ({ candidates: [], cleaned: [] }),
+      scheduleCleanup: async () => ({ candidates: [], jobs: [] }),
+      retainTelemetry: async () => telemetryRetentionResult(),
+      deliverEvent: async () => ({ status: "idle" }),
+      repairEventDelivery: async () => [],
+      runSynthetics: async () => ({
+        environment: "test",
+        scheduledAt: new Date().toISOString(),
+        dueCount: 0,
+        completedCount: 0,
+        failureCount: 0,
+        staleIgnoredCount: 0,
+        skippedCount: 0,
+        checks: [],
+      }),
+      refreshBudgetEvidence: async () => {
+        refreshAttempts += 1;
+        if (refreshAttempts === 1) throw new Error("provider unavailable");
+        return refresh.promise;
+      },
+      inspectBudgetEvidence: async () => budgetStatus("missing"),
+    });
+
+    let unready: Awaited<ReturnType<typeof readJson>> | null = null;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      unready = await readJson(
+        await fetch(`http://127.0.0.1:${port}/ready`),
+      );
+      if (
+        (
+          unready.body.authorities as Record<string, { status: string }>
+        ).budgetEvidence?.status === "failed"
+      ) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(unready).toMatchObject({
+      status: 503,
+      body: {
+        authorityReady: false,
+        lastBudgetRefreshStatus: "failed",
+        budgetStatus: { evidenceStatus: "missing" },
+        authorities: { budgetEvidence: { status: "failed" } },
+      },
+    });
+    while (refreshAttempts < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    let closed = false;
+    const close = handle.close().then(() => {
+      closed = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(closed).toBe(false);
+    refresh.reject(new Error("provider unavailable"));
+    await close;
+    expect(closed).toBe(true);
+    handle = null;
   });
 
   it("stays unready until database authority succeeds and drains behind authenticated control", async () => {

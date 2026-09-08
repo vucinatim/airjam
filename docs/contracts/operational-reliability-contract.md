@@ -255,20 +255,28 @@ and never becomes alert authority.
 
 ## Worker Readiness
 
-The operational worker tracks five authorities independently:
+The operational worker tracks these authorities independently:
 
 1. durable jobs
 2. maintenance/repair
 3. lifecycle cleanup
 4. event delivery
 5. synthetics
+6. persisted operational-budget evidence
 
 `/ready` requires recent successful database-backed job and event-delivery
-authority. Auxiliary failures remain visible as degraded authorities. A
+authority, telemetry-retention authority, and, whenever budget refresh is
+enabled, fresh persisted budget evidence. Production cannot disable budget
+refresh. Missing or older-than-six-hours evidence makes the worker unready. A
+provider collection failure remains visible in refresh status and logs, but
+does not make the worker unready while the previously persisted evidence is
+still fresh. Auxiliary failures remain visible as degraded authorities. A
 successful loop can never erase another subsystem's failure.
 
 `/health` remains process liveness. Authenticated `POST /drain` stops new work
-and waits for bounded in-flight completion before deployment termination.
+and waits for bounded in-flight completion, including a provider budget
+refresh, before deployment termination. Railway deploy health uses `/ready` so
+a new production worker cannot become authoritative without fresh evidence.
 
 ## Configuration
 
@@ -277,8 +285,19 @@ Operational worker cadence:
 1. `AIRJAM_PLATFORM_WORKER_EVENT_DELIVERY_MS` defaults to `1000`
 2. `AIRJAM_PLATFORM_WORKER_SYNTHETIC_MS` defaults to `30000`
 3. `AIRJAM_PLATFORM_WORKER_ISSUE_PROJECTION_MS` defaults to `5000`
-4. existing poll, repair, cleanup, concurrency, drain, and control-token values
+4. `AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MS` defaults to `900000` (15 minutes)
+   and must remain shorter than the six-hour evidence staleness boundary
+5. `AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MODE` defaults to `enabled` in
+   production and `disabled` elsewhere; production rejects `disabled`
+6. existing poll, repair, cleanup, concurrency, drain, and control-token values
    retain their current meanings
+
+Enabled budget refresh requires `RAILWAY_PROJECT_ID`,
+`RAILWAY_ENVIRONMENT_ID`, and a sealed, environment-scoped
+`RAILWAY_PROJECT_TOKEN`. The worker attests the token through Railway's
+`projectToken` query and requires exact project/environment identity before
+collecting usage. Account tokens and ambiguous token fallbacks are not part of
+this authority.
 
 Synthetic targets:
 

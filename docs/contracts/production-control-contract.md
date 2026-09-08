@@ -1,6 +1,6 @@
 # Production Control Contract
 
-Last updated: 2026-08-30
+Last updated: 2026-09-08
 Status: canonical 1.0 contract
 
 Related docs:
@@ -130,6 +130,21 @@ scope when aggregating spend. Evidence older than six hours is explicitly
 `stale`; missing and stale authority return no current state while preserving a
 separately labeled last-known state. They are never silently treated as
 `normal`.
+
+The platform operational worker is the single continuous collector. It runs an
+immediate startup refresh and a 15-minute schedule. A project-scoped PostgreSQL
+advisory lock serializes overlapping worker replicas; the lock holder re-reads
+persisted evidence and skips the provider call when the exact Railway project
+scope is not due. Collection uses the same platform-owned Railway adapter as
+the CLI and persists through `recordOperationalBudgetEvidence`; there is no
+parallel table, queue, cron service, or in-memory authority.
+
+Production collection requires a sealed, environment-scoped
+`RAILWAY_PROJECT_TOKEN`. Before usage reads, the adapter queries Railway's
+project-token identity and requires an exact match with both
+`RAILWAY_PROJECT_ID` and `RAILWAY_ENVIRONMENT_ID`. It never falls back to an
+account token. Local and preview workers default to explicit collection-disabled
+status and cannot claim production budget authority.
 
 The ordinary threshold sequence is `$25`, `$50`, `$75`, `$90`, and `$100`.
 The one-cycle 1.0 launch sequence is `$50`, `$75`, `$100`, `$135`, and `$150`.
@@ -312,9 +327,12 @@ pnpm --silent run repo -- platform operations budget sync --help
 ```
 
 `budget sync` reads Railway directly, previews by default, and requires actor,
-reason, idempotency key, and explicit `--apply` before persistence. A retry of a
-completed logical collection returns the original evidence before another
-provider request. The CLI exposes no state, threshold, or ceiling override.
+reason, idempotency key, exact `--railway-project` and
+`--railway-environment` targets, and explicit `--apply` before persistence. It
+uses the same project-token-only, exactly attested adapter as the worker. A
+retry of a completed logical collection returns the original evidence before
+token resolution or another provider request. The CLI exposes no state,
+threshold, or ceiling override.
 
 Quota inspection and prospective decisions are:
 
