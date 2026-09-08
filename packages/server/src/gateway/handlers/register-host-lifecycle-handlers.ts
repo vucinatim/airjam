@@ -58,6 +58,10 @@ import {
   transitionToSystemFocus,
 } from "../../domain/room-session-domain.js";
 import { redactIdentifier } from "../../logging/logger.js";
+import type {
+  RealtimeAdmissionDenial,
+  RealtimeRoomLease,
+} from "../../services/realtime-admission-service.js";
 import type { RoomSession } from "../../types.js";
 import { generateRoomCode } from "../../utils/ids.js";
 import type { SocketHandlerContext } from "../socket-handler-context.js";
@@ -65,17 +69,30 @@ import type { SocketHandlerContext } from "../socket-handler-context.js";
 export const registerHostLifecycleHandlers = (
   context: SocketHandlerContext,
 ): void => {
-  const { io, socket, roomManager, authService, runtimeUsagePublisher } =
-    context;
+  const {
+    io,
+    socket,
+    roomManager,
+    authService,
+    runtimeUsagePublisher,
+    realtimeAdmissionService,
+  } = context;
   const logger = context.logger.child({ component: "host-lifecycle" });
   const requestOrigin =
     typeof socket.handshake.headers.origin === "string"
       ? socket.handshake.headers.origin
       : undefined;
+  let hostAdmissionPending = false;
+  let hostLifecycleEpoch = 0;
+
+  socket.on("disconnect", () => {
+    hostLifecycleEpoch += 1;
+  });
 
   const bindHostAuthority = (
     appId?: string,
     gameId?: string,
+    creatorId?: string,
     verifiedVia?: "appId" | "hostGrant",
     verifiedOrigin?: string,
     hostSessionKind: HostSessionKind = "system",
@@ -84,6 +101,7 @@ export const registerHostLifecycleHandlers = (
     socket.data.hostAuthority = {
       appId,
       gameId,
+      creatorId,
       traceId,
       verifiedAt: Date.now(),
       verifiedVia,
@@ -97,6 +115,7 @@ export const registerHostLifecycleHandlers = (
     roomId: string,
     maxPlayers: number,
     hostSessionKind: HostSessionKind,
+    admissionLease: RealtimeRoomLease,
   ): RoomSession => {
     const analytics = createRoomAnalyticsState(socket.data.hostAuthority);
     analytics.hostSessionKind = hostSessionKind;
@@ -118,6 +137,7 @@ export const registerHostLifecycleHandlers = (
       controllerOrientation: "portrait",
       roomSettings: DEFAULT_ROOM_PLATFORM_SETTINGS,
       lifecycleState: startsInGameFocus ? "GAME_ACTIVE" : "SYSTEM_IDLE",
+      admissionLease,
     };
   };
 
@@ -170,29 +190,96 @@ export const registerHostLifecycleHandlers = (
     return roomId;
   };
 
-  const createAndBindRoomForHost = ({
+  const createAndBindRoomForHost = async ({
     roomId,
     maxPlayers,
     hostSessionKind,
+    replacingLease,
   }: {
     roomId?: string;
     maxPlayers: number;
     hostSessionKind: HostSessionKind;
-  }): RoomSession | null => {
-    const nextRoomId = roomId ?? generateUniqueRoomId();
-    if (!nextRoomId) {
-      return null;
+    replacingLease?: RealtimeRoomLease;
+  }): Promise<
+    | { ok: true; session: RoomSession }
+    | { ok: false; denial?: RealtimeAdmissionDenial }
+  > => {
+    if (hostAdmissionPending) {
+      return {
+        ok: false,
+        denial: {
+          ok: false,
+          reason: "operation_in_progress",
+          message: "A room operation is already in progress. Please retry.",
+          retryAfterSeconds: 1,
+        },
+      };
     }
 
-    const session = createInitialRoomSession(
-      nextRoomId,
-      maxPlayers,
-      hostSessionKind,
-    );
-    roomManager.setRoom(nextRoomId, session);
-    roomManager.setHostRoom(socket.id, nextRoomId);
-    socket.join(nextRoomId);
-    return session;
+    hostAdmissionPending = true;
+    const operationEpoch = hostLifecycleEpoch;
+    const authority = socket.data.hostAuthority;
+    const attempts = roomId ? 1 : 10;
+    try {
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const nextRoomId = roomId ?? generateUniqueRoomId();
+        if (!nextRoomId) return { ok: false };
+
+        const admission = await realtimeAdmissionService.admitRoom({
+          roomId: nextRoomId,
+          appId: authority?.appId,
+          gameId: authority?.gameId,
+          creatorId: authority?.creatorId,
+          maxControllers: maxPlayers,
+          replacingLease,
+        });
+        if (!admission.ok) {
+          if (!roomId && admission.reason === "room_conflict") continue;
+          return { ok: false, denial: admission };
+        }
+
+        if (!socket.connected || hostLifecycleEpoch !== operationEpoch) {
+          await realtimeAdmissionService.releaseRoom(admission.lease);
+          return {
+            ok: false,
+            denial: {
+              ok: false,
+              reason: "operation_cancelled",
+              message: "The host disconnected before the room was ready.",
+              retryAfterSeconds: null,
+            },
+          };
+        }
+
+        const session = createInitialRoomSession(
+          nextRoomId,
+          maxPlayers,
+          hostSessionKind,
+          admission.lease,
+        );
+        roomManager.setRoom(nextRoomId, session);
+        roomManager.setHostRoom(socket.id, nextRoomId);
+        socket.join(nextRoomId);
+        return { ok: true, session };
+      }
+      return { ok: false };
+    } finally {
+      hostAdmissionPending = false;
+    }
+  };
+
+  const rejectAdmission = (
+    denial: RealtimeAdmissionDenial | undefined,
+    callback: (ack: HostRegistrationAck) => void,
+  ): void => {
+    callback({
+      ok: false,
+      message: denial?.message ?? "Failed to reserve room capacity",
+      code: ErrorCode.SERVICE_UNAVAILABLE,
+      ...(denial?.retryAfterSeconds
+        ? { retryAfterSeconds: denial.retryAfterSeconds }
+        : {}),
+    });
   };
 
   const buildHostRegistrationAck = (
@@ -344,6 +431,9 @@ export const registerHostLifecycleHandlers = (
         hostGrant: parsed.data.hostGrant,
         origin: requestOrigin,
       });
+      if (!socket.connected) {
+        return;
+      }
       if (!verification.isVerified) {
         logHostEvent(
           "warn",
@@ -394,6 +484,7 @@ export const registerHostLifecycleHandlers = (
       const traceId = bindHostAuthority(
         verification.appId,
         verification.gameId,
+        verification.creatorId,
         verification.verifiedVia,
         verification.verifiedOrigin,
         parsed.data.hostSessionKind,
@@ -491,8 +582,16 @@ export const registerHostLifecycleHandlers = (
         syncRoomAnalyticsState(session.analytics, socket.data.hostAuthority);
         roomManager.setRoom(roomId, session);
       } else {
-        session = createInitialRoomSession(roomId, 32, "system");
-        roomManager.setRoom(roomId, session);
+        const created = await createAndBindRoomForHost({
+          roomId,
+          maxPlayers: 32,
+          hostSessionKind: "system",
+        });
+        if (!created.ok) {
+          rejectAdmission(created.denial, callback);
+          return;
+        }
+        session = created.session;
       }
 
       roomManager.setHostRoom(socket.id, roomId);
@@ -511,11 +610,7 @@ export const registerHostLifecycleHandlers = (
           kind: "room_registered",
         }),
       );
-      callback({
-        ok: true,
-        roomId,
-        controllerCapability: getControllerCapabilityForAck(session),
-      });
+      callback(buildHostRegistrationAck(session));
       io.to(roomId).emit("server:roomReady", { roomId });
     },
   );
@@ -609,24 +704,25 @@ export const registerHostLifecycleHandlers = (
         }
       }
 
-      const session = createAndBindRoomForHost({
+      const created = await createAndBindRoomForHost({
         maxPlayers: maxPlayers ?? 8,
         hostSessionKind: socket.data.hostAuthority?.hostSessionKind ?? "game",
       });
-      if (!session) {
+      if (!created.ok) {
         logHostEvent(
           "warn",
           AIRJAM_DEV_LOG_EVENTS.host.createRoomRejected,
-          "Rejected host createRoom because a unique room ID could not be generated",
-          { reason: "room_id_generation_failed" },
+          created.denial
+            ? "Rejected host createRoom by realtime admission authority"
+            : "Rejected host createRoom because a unique room ID could not be generated",
+          {
+            reason: created.denial?.reason ?? "room_id_generation_failed",
+          },
         );
-        callback({
-          ok: false,
-          message: "Failed to generate unique room ID",
-          code: ErrorCode.CONNECTION_FAILED,
-        });
+        rejectAdmission(created.denial, callback);
         return;
       }
+      const session = created.session;
 
       logHostEvent(
         "info",
@@ -797,14 +893,10 @@ export const registerHostLifecycleHandlers = (
           },
         );
         callback({
-          ok: true,
-          roomId,
+          ...buildHostRegistrationAck(session),
           arcadeSession: buildArcadeSessionForHostAck(session, uuidv4),
           arcadeSurfaceCheckpoint:
             buildArcadeSurfaceCheckpointForHostAck(session),
-          players: buildHostRosterSnapshot(session),
-          controllers: buildHostControllerSnapshot(session),
-          controllerCapability: getControllerCapabilityForAck(session),
         });
         socket.emit("server:state", buildRoomStateMessage(roomId, session));
         emitReplicatedStoreSnapshotsToHost(socket, session);
@@ -934,20 +1026,19 @@ export const registerHostLifecycleHandlers = (
         return;
       }
 
-      roomManager.removeRoom(roomId, io, "room_reset");
-      const nextSession = createAndBindRoomForHost({
+      const created = await createAndBindRoomForHost({
         roomId: nextRoomId,
         maxPlayers: session.maxPlayers,
         hostSessionKind: session.analytics.hostSessionKind,
+        replacingLease: session.admissionLease,
       });
-      if (!nextSession) {
-        callback({
-          ok: false,
-          message: "Failed to create a fresh room after reset",
-          code: ErrorCode.CONNECTION_FAILED,
-        });
+      if (!created.ok) {
+        rejectAdmission(created.denial, callback);
         return;
       }
+      const nextSession = created.session;
+      roomManager.removeRoom(roomId, io, "room_reset");
+      roomManager.setHostRoom(socket.id, nextRoomId);
 
       logHostEvent(
         "info",
@@ -1046,6 +1137,7 @@ export const registerHostLifecycleHandlers = (
         controllerSession.pendingDisconnectTimer = undefined;
       }
 
+      controllerSession.retiredAt = Date.now();
       session.controllers.delete(controllerId);
       emitControllerLeftNotice(io, session, controllerId);
       runtimeUsagePublisher.publish(
@@ -1074,6 +1166,9 @@ export const registerHostLifecycleHandlers = (
         }
       }
 
+      await realtimeAdmissionService.releaseController(
+        controllerSession.admissionLease,
+      );
       callback({ ok: true });
     },
   );

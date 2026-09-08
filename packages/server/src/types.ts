@@ -11,6 +11,10 @@ import type {
   RoomCode,
   RuntimeState,
 } from "@air-jam/sdk/protocol";
+import type {
+  RealtimeControllerLease,
+  RealtimeRoomLease,
+} from "./services/realtime-admission-service.js";
 
 type ControllerOrientation = NonNullable<
   ControllerStateMessage["state"]["orientation"]
@@ -27,9 +31,11 @@ export interface ControllerSession {
   connected: boolean;
   resumeLeaseExpiresAt: number | null;
   pendingDisconnectTimer?: ReturnType<typeof setTimeout>;
+  retiredAt?: number;
   playerProfile: PlayerProfile;
   privilegedGrants: ControllerPrivilegedGrant[];
   source: ControllerSource;
+  admissionLease: RealtimeControllerLease;
 }
 
 export interface RoomAnalyticsState {
@@ -78,6 +84,7 @@ export interface RoomSession {
   controllerOrientation: ControllerOrientation;
   roomSettings: RoomPlatformSettingsSnapshot;
   lifecycleState: RoomLifecycleState;
+  admissionLease: RealtimeRoomLease;
   /** Deferred teardown when child host socket drops (Socket.IO reconnect grace). */
   pendingChildTeardownTimer?: ReturnType<typeof setTimeout>;
   /** Deferred teardown when the master host socket drops. */

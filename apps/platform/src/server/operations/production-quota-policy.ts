@@ -1,12 +1,14 @@
-import type {
-  OperationalBudgetState,
-  OperationalLane,
-  OperationalLaneControlSnapshot,
-  OperationalQuotaKey,
-  OperationalQuotaPolicySnapshot,
-  OperationalQuotaScopeKind,
-  OperationalQuotaUnit,
-  OperationalQuotaWindow,
+import {
+  decideOperationalAdmissionPolicy,
+  REALTIME_ADMISSION_POLICY,
+  type OperationalBudgetState,
+  type OperationalLane,
+  type OperationalLaneControlSnapshot,
+  type OperationalQuotaKey,
+  type OperationalQuotaPolicySnapshot,
+  type OperationalQuotaScopeKind,
+  type OperationalQuotaUnit,
+  type OperationalQuotaWindow,
 } from "@air-jam/database-contract";
 import type { OperationalBudgetStatus } from "./production-budget-policy";
 
@@ -106,7 +108,7 @@ export const OPERATIONAL_QUOTA_POLICIES = Object.freeze({
     lanes: ["realtime_room_admission"],
     unit: "count",
     window: "concurrent",
-    limit: 50,
+    limit: REALTIME_ADMISSION_POLICY.creatorRooms,
   }),
   game_concurrent_rooms: quotaPolicy({
     key: "game_concurrent_rooms",
@@ -114,7 +116,7 @@ export const OPERATIONAL_QUOTA_POLICIES = Object.freeze({
     lanes: ["realtime_room_admission"],
     unit: "count",
     window: "concurrent",
-    limit: 50,
+    limit: REALTIME_ADMISSION_POLICY.gameRooms,
   }),
 } satisfies Readonly<
   Record<OperationalQuotaKey, OperationalQuotaPolicySnapshot>
@@ -168,51 +170,6 @@ export class OperationalQuotaPolicyError extends Error {
   }
 }
 
-const budgetBlockedLanes: Readonly<
-  Record<OperationalBudgetState, ReadonlySet<OperationalLane>>
-> = {
-  normal: new Set(),
-  warning: new Set(),
-  protection: new Set(["preview_capacity"]),
-  near_ceiling: new Set([
-    "preview_capacity",
-    "browser_validation",
-    "release_processing",
-    "moderation",
-  ]),
-  ceiling: new Set([
-    "game_creation",
-    "game_listing",
-    "release_submission",
-    "artifact_ingestion",
-    "release_processing",
-    "browser_validation",
-    "moderation",
-    "media_ingestion",
-    "preview_capacity",
-    "realtime_room_admission",
-  ]),
-};
-
-const deniedDecision = ({
-  base,
-  reason,
-  retryAfterSeconds = null,
-}: {
-  base: Omit<
-    OperationalQuotaAdmissionDecision,
-    "outcome" | "reason" | "retryAfterSeconds" | "byocAvailable"
-  >;
-  reason: Exclude<OperationalQuotaAdmissionDecision["reason"], null>;
-  retryAfterSeconds?: number | null;
-}): OperationalQuotaAdmissionDecision => ({
-  ...base,
-  outcome: "denied",
-  reason,
-  retryAfterSeconds,
-  byocAvailable: true,
-});
-
 export const decideOperationalQuotaAdmission = ({
   lane,
   usage,
@@ -251,11 +208,22 @@ export const decideOperationalQuotaAdmission = ({
     );
   }
 
-  const projectedUsage =
-    usage.current === null ? null : usage.current + requestedAmount;
-  if (projectedUsage !== null && !Number.isSafeInteger(projectedUsage)) {
+  let policyDecision;
+  try {
+    policyDecision = decideOperationalAdmissionPolicy({
+      lane,
+      control,
+      budget,
+      quota: {
+        authorityAvailable: usage.authorityStatus === "available",
+        current: usage.current,
+        limit: usage.limit,
+        requestedAmount,
+      },
+    });
+  } catch (error) {
     throw new OperationalQuotaPolicyError(
-      "Projected quota usage exceeds the safe integer range.",
+      error instanceof Error ? error.message : String(error),
     );
   }
   const base = {
@@ -271,65 +239,13 @@ export const decideOperationalQuotaAdmission = ({
     budgetState: budget.state,
     usage,
     requestedAmount,
-    projectedUsage,
+    projectedUsage: policyDecision.projectedUsage,
   };
-
-  if (!control) {
-    return deniedDecision({
-      base,
-      reason: "control_unavailable",
-      retryAfterSeconds: 30,
-    });
-  }
-  if (control.lane !== lane) {
-    throw new OperationalQuotaPolicyError(
-      `Lane control for ${control.lane} cannot decide ${lane}.`,
-    );
-  }
-  if (control.mode === "paused") {
-    return deniedDecision({
-      base,
-      reason: "lane_paused",
-      retryAfterSeconds: control.retryAfterSeconds,
-    });
-  }
-  if (budget.evidenceStatus !== "fresh" || budget.state === null) {
-    return deniedDecision({
-      base,
-      reason: "control_unavailable",
-      retryAfterSeconds: 30,
-    });
-  }
-  if (usage.authorityStatus !== "available" || usage.current === null) {
-    return deniedDecision({
-      base,
-      reason: "control_unavailable",
-      retryAfterSeconds: 30,
-    });
-  }
-  if (budgetBlockedLanes[budget.state].has(lane)) {
-    return deniedDecision({ base, reason: "budget_protection" });
-  }
-  if (projectedUsage !== null && projectedUsage > usage.limit) {
-    const enforced =
-      control.mode === "restricted" ||
-      budget.state === "protection" ||
-      budget.state === "near_ceiling" ||
-      budget.state === "ceiling";
-    return {
-      ...base,
-      outcome: enforced ? "denied" : "shadow_denied",
-      reason: "quota_exceeded",
-      retryAfterSeconds: null,
-      byocAvailable: enforced,
-    };
-  }
-
   return {
     ...base,
-    outcome: "allowed",
-    reason: null,
-    retryAfterSeconds: null,
-    byocAvailable: false,
+    outcome: policyDecision.outcome,
+    reason: policyDecision.reason,
+    retryAfterSeconds: policyDecision.retryAfterSeconds,
+    byocAvailable: policyDecision.outcome === "denied",
   };
 };

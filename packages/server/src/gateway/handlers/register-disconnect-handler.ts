@@ -12,7 +12,13 @@ import type { SocketHandlerContext } from "../socket-handler-context.js";
 export const registerDisconnectHandler = (
   context: SocketHandlerContext,
 ): void => {
-  const { io, socket, roomManager, runtimeUsagePublisher } = context;
+  const {
+    io,
+    socket,
+    roomManager,
+    runtimeUsagePublisher,
+    realtimeAdmissionService,
+  } = context;
   const logger = context.logger.child({ component: "disconnect" });
 
   const getDisconnectLogger = (bindings: Record<string, unknown> = {}) => {
@@ -138,6 +144,9 @@ export const registerDisconnectHandler = (
               "Room closed after master host disconnect",
             );
             roomManager.removeRoom(roomId, io, "Host disconnected");
+            void realtimeAdmissionService.releaseRoom(
+              currentSession.admissionLease,
+            );
           }
         }, 3000);
       }
@@ -184,7 +193,11 @@ export const registerDisconnectHandler = (
               return;
             }
             currentController.pendingDisconnectTimer = undefined;
+            currentController.retiredAt = Date.now();
             currentSession.controllers.delete(controller.controllerId);
+            void realtimeAdmissionService.releaseController(
+              currentController.admissionLease,
+            );
             emitControllerLeftNotice(
               io,
               currentSession,
@@ -213,7 +226,11 @@ export const registerDisconnectHandler = (
             );
           }, resumeLeaseMs);
         } else {
+          controllerSession.retiredAt = Date.now();
           session.controllers.delete(controller.controllerId);
+          void realtimeAdmissionService.releaseController(
+            controllerSession.admissionLease,
+          );
           emitControllerLeftNotice(io, session, controller.controllerId);
           runtimeUsagePublisher.publish(
             createRoomRuntimeUsageEvent(session, {
@@ -240,6 +257,12 @@ export const registerDisconnectHandler = (
       }
 
       if (resumeLeaseMs > 0) {
+        if (controllerSession && resumeLeaseExpiresAt !== null) {
+          void realtimeAdmissionService.markControllerDisconnected(
+            controllerSession.admissionLease,
+            resumeLeaseMs,
+          );
+        }
         runtimeUsagePublisher.publish(
           createRoomRuntimeUsageEvent(session, {
             kind: "controller_disconnected",

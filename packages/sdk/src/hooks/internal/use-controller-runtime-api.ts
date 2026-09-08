@@ -26,6 +26,7 @@ import {
   controllerJoinSchema,
   controllerLeaveSchema,
   controllerSystemSchema,
+  ErrorCode,
   playerProfilePatchSchema,
   roomCodeSchema,
 } from "../../protocol";
@@ -35,6 +36,10 @@ import type {
   ControllerWelcomePayload,
   PlayerUpdatedNotice,
 } from "../../protocol/notices";
+import {
+  resolveAdmissionRetry,
+  type AdmissionRetryDecision,
+} from "../../runtime/admission-retry";
 import {
   clearControllerRoomBinding,
   getOrCreateControllerDeviceId,
@@ -463,6 +468,17 @@ export const useControllerRuntimeApi = (
       return;
     }
 
+    let disposed = false;
+    let joinEpoch = 0;
+    let joinRetryTimeout: ReturnType<typeof setTimeout> | null = null;
+    const clearJoinRetryTimeout = (): void => {
+      if (!joinRetryTimeout) {
+        return;
+      }
+      clearTimeout(joinRetryTimeout);
+      joinRetryTimeout = null;
+    };
+
     storeState.setControllerId(controllerId);
     if (
       embeddedController?.playerProfile?.label ||
@@ -483,7 +499,90 @@ export const useControllerRuntimeApi = (
       storeState.upsertPlayer(fallbackPlayer);
     }
 
+    const attemptJoin = (
+      completedRetries: number,
+      operationEpoch: number,
+      retry?: AdmissionRetryDecision,
+    ): void => {
+      if (
+        disposed ||
+        operationEpoch !== joinEpoch ||
+        !socket.connected ||
+        embeddedController
+      ) {
+        return;
+      }
+
+      const payload = controllerJoinSchema.parse({
+        roomId: parsedRoomId,
+        controllerId,
+        deviceId: deviceId ?? undefined,
+        nickname: nicknameRef.current || undefined,
+        avatarId: avatarIdRef.current || undefined,
+        capabilityToken: capabilityToken ?? undefined,
+      });
+      emitControllerRuntimeEvent({
+        event: AIRJAM_DEV_LOG_EVENTS.runtime.controllerJoinRequested,
+        message:
+          completedRetries === 0
+            ? "Controller requested room join"
+            : "Controller retried room join after admission denial",
+        roomId: payload.roomId,
+        data: {
+          joinSource,
+          controllerId: payload.controllerId,
+          hasNickname: Boolean(payload.nickname),
+          hasAvatarId: Boolean(payload.avatarId),
+          hasCapabilityToken: Boolean(payload.capabilityToken),
+          admissionAttempt: completedRetries + 1,
+          ...(retry
+            ? {
+                retryReasonCode: retry.code,
+                retryAfterSeconds: retry.retryAfterSeconds,
+              }
+            : {}),
+        },
+      });
+      socket.emit("controller:join", payload, (ack: ControllerJoinAck) => {
+        if (disposed || operationEpoch !== joinEpoch) {
+          return;
+        }
+
+        const latestState = store.getState();
+        if (!ack.ok) {
+          if (ack.code === ErrorCode.ROOM_NOT_FOUND) {
+            clearControllerRoomBinding(parsedRoomId);
+          }
+          latestState.setError(ack.message ?? "Unable to join room");
+          latestState.resetRuntimeState();
+
+          const retryDecision = resolveAdmissionRetry(ack, completedRetries);
+          if (retryDecision) {
+            latestState.setStatus("connecting");
+            clearJoinRetryTimeout();
+            joinRetryTimeout = setTimeout(() => {
+              joinRetryTimeout = null;
+              attemptJoin(completedRetries + 1, operationEpoch, retryDecision);
+            }, retryDecision.delayMs);
+            return;
+          }
+
+          latestState.setStatus("disconnected");
+          return;
+        }
+        if (ack.controllerId) {
+          latestState.setControllerId(ack.controllerId);
+          writeControllerRoomBinding(parsedRoomId, ack.controllerId);
+        }
+        latestState.setError(undefined);
+        latestState.setStatus("connected");
+      });
+    };
+
     const handleConnect = (): void => {
+      clearJoinRetryTimeout();
+      joinEpoch += 1;
+      const operationEpoch = joinEpoch;
       emitControllerRuntimeEvent({
         event: AIRJAM_DEV_LOG_EVENTS.runtime.socketConnected,
         message: "Controller socket connected",
@@ -498,47 +597,12 @@ export const useControllerRuntimeApi = (
       if (embeddedController) {
         return;
       }
-
-      const payload = controllerJoinSchema.parse({
-        roomId: parsedRoomId,
-        controllerId,
-        deviceId: deviceId ?? undefined,
-        nickname: nicknameRef.current || undefined,
-        avatarId: avatarIdRef.current || undefined,
-        capabilityToken: capabilityToken ?? undefined,
-      });
-      emitControllerRuntimeEvent({
-        event: AIRJAM_DEV_LOG_EVENTS.runtime.controllerJoinRequested,
-        message: "Controller requested room join",
-        roomId: payload.roomId,
-        data: {
-          joinSource,
-          controllerId: payload.controllerId,
-          hasNickname: Boolean(payload.nickname),
-          hasAvatarId: Boolean(payload.avatarId),
-          hasCapabilityToken: Boolean(payload.capabilityToken),
-        },
-      });
-      socket.emit("controller:join", payload, (ack: ControllerJoinAck) => {
-        const latestState = store.getState();
-        if (!ack.ok) {
-          if (ack.code === "ROOM_NOT_FOUND") {
-            clearControllerRoomBinding(parsedRoomId);
-          }
-          latestState.setError(ack.message ?? "Unable to join room");
-          latestState.setStatus("disconnected");
-          latestState.resetRuntimeState();
-          return;
-        }
-        if (ack.controllerId) {
-          latestState.setControllerId(ack.controllerId);
-          writeControllerRoomBinding(parsedRoomId, ack.controllerId);
-        }
-        latestState.setStatus("connected");
-      });
+      attemptJoin(0, operationEpoch);
     };
 
     const handleDisconnect = (reason?: string): void => {
+      joinEpoch += 1;
+      clearJoinRetryTimeout();
       emitControllerRuntimeEvent({
         event: AIRJAM_DEV_LOG_EVENTS.runtime.socketDisconnected,
         message: "Controller socket disconnected",
@@ -756,6 +820,9 @@ export const useControllerRuntimeApi = (
     }
 
     return () => {
+      disposed = true;
+      joinEpoch += 1;
+      clearJoinRetryTimeout();
       socket.off("connect", handleConnect);
       socket.off("disconnect", handleDisconnect);
       socket.off("connect_error", handleConnectError);

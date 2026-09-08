@@ -213,6 +213,81 @@ describe("session reconnect behavior", () => {
     );
   });
 
+  it("retries a controller admission denial after the server retry-after delay", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    let joinAttempts = 0;
+    mocked.controllerSocket.emit.mockImplementation(
+      (event: string, _payload: unknown, callback?: (ack: unknown) => void) => {
+        if (event !== "controller:join") return;
+        joinAttempts += 1;
+        callback?.(
+          joinAttempts === 1
+            ? {
+                ok: false,
+                code: "SERVICE_UNAVAILABLE",
+                message: "Admission authority is busy",
+                retryAfterSeconds: 1,
+              }
+            : { ok: true, controllerId: "ctrl_retry_1" },
+        );
+      },
+    );
+
+    const { result } = renderHook(() => useAirJamController(), {
+      wrapper: createControllerWrapper({
+        roomId: "ROOM1",
+        controllerId: "ctrl_retry_1",
+      }),
+    });
+
+    expect(joinAttempts).toBe(1);
+    expect(result.current.connectionStatus).toBe("connecting");
+    expect(result.current.lastError).toBe("Admission authority is busy");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(999);
+    });
+    expect(joinAttempts).toBe(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(joinAttempts).toBe(2);
+    expect(result.current.connectionStatus).toBe("connected");
+    expect(result.current.lastError).toBeUndefined();
+  });
+
+  it("cancels a pending controller admission retry on unmount", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    let joinAttempts = 0;
+    mocked.controllerSocket.emit.mockImplementation(
+      (event: string, _payload: unknown, callback?: (ack: unknown) => void) => {
+        if (event === "controller:join") {
+          joinAttempts += 1;
+          callback?.({
+            ok: false,
+            code: "SERVICE_UNAVAILABLE",
+            message: "Admission authority is busy",
+            retryAfterSeconds: 1,
+          });
+        }
+      },
+    );
+
+    const { unmount } = renderHook(() => useAirJamController(), {
+      wrapper: createControllerWrapper({ roomId: "ROOM1" }),
+    });
+    expect(joinAttempts).toBe(1);
+
+    unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(joinAttempts).toBe(1);
+  });
+
   it("keeps controller runtime state unchanged on disconnect", async () => {
     const { result } = renderHook(() => useAirJamController(), {
       wrapper: createControllerWrapper({

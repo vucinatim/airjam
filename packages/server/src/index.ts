@@ -1,3 +1,4 @@
+import { REALTIME_ADMISSION_POLICY } from "@air-jam/database-contract";
 import {
   AIRJAM_DEV_LOG_EVENTS,
   type ClientToServerEvents,
@@ -11,7 +12,7 @@ import { createServer } from "node:http";
 import { Server } from "socket.io";
 import { createDatabaseRuntimeUsageLedgerPublisher } from "./analytics/runtime-usage-ledger.js";
 import { type RuntimeUsagePublisher } from "./analytics/runtime-usage.js";
-import { createServerDatabase, type ServerDatabase } from "./db.js";
+import { createOwnedServerDatabase, type ServerDatabase } from "./db.js";
 import { REMOTE_DATABASE_BLOCKED_MESSAGE } from "./env/database-url-policy.js";
 import { loadServerEnv, type ServerEnvConfig } from "./env/server-env.js";
 import { registerSocketHandlers } from "./gateway/register-socket-handlers.js";
@@ -24,6 +25,7 @@ import { resolveDefaultDevLogDir } from "./logging/log-paths.js";
 import { createServerLogger, type ServerLogger } from "./logging/logger.js";
 import {
   createDatabaseServerOperationalEventPublisher,
+  publishServerOperationalFailureSafely,
   type ServerOperationalEventPublisher,
 } from "./operations/operational-event-publisher.js";
 import { resolveCorsOrigin, type AllowedOrigins } from "./origin-policy.js";
@@ -32,6 +34,13 @@ import {
   type HostBootstrapAuthService,
 } from "./services/auth-service.js";
 import { RateLimitService } from "./services/rate-limit-service.js";
+import {
+  createLocalRealtimeAdmissionService,
+  createUnavailableRealtimeAdmissionService,
+  DatabaseRealtimeAdmissionService,
+  type RealtimeAdmissionService,
+  type RealtimeAdmissionTerminalFailure,
+} from "./services/realtime-admission-service.js";
 import { RoomManager } from "./services/room-manager.js";
 
 export type AirJamIoServer = Server<
@@ -56,6 +65,7 @@ export interface CreateAirJamServerOptions {
   rateLimitService?: RateLimitService;
   roomManager?: RoomManager;
   db?: ServerDatabase | null;
+  realtimeAdmissionService?: RealtimeAdmissionService;
   proxyHeaderTrustMode?: ServerEnvConfig["proxyHeaderTrustMode"];
   devLogCollector?: DevLogCollector | false;
   devLogDir?: string;
@@ -67,9 +77,17 @@ export interface AirJamServerRuntime {
   httpServer: ReturnType<typeof createServer>;
   io: AirJamIoServer;
   start: (portOverride?: number) => Promise<number>;
+  drain: (timeoutMs?: number) => Promise<{
+    completed: boolean;
+    remainingRooms: number;
+    waitedMs: number;
+  }>;
   stop: () => Promise<void>;
   flushDevLogs: () => Promise<void>;
   getPort: () => number | null;
+  onTerminalFailure: (
+    listener: (failure: RealtimeAdmissionTerminalFailure) => void,
+  ) => () => void;
 }
 
 let hasWarnedAboutBlockedRemoteDatabase = false;
@@ -79,6 +97,12 @@ export const createAirJamServer = (
 ): AirJamServerRuntime => {
   const envConfig = options.envConfig ?? loadServerEnv();
   let activePort: number | null = null;
+  let admissionStarted = false;
+  let stopPromise: Promise<void> | null = null;
+  let terminalFailure: RealtimeAdmissionTerminalFailure | null = null;
+  const terminalFailureListeners = new Set<
+    (failure: RealtimeAdmissionTerminalFailure) => void
+  >();
 
   const devLogCollector =
     options.devLogCollector === false
@@ -109,7 +133,30 @@ export const createAirJamServer = (
   const roomManagerInstance = options.roomManager ?? new RoomManager();
   const rateLimitServiceInstance =
     options.rateLimitService ?? new RateLimitService();
-  const db = options.db ?? createServerDatabase(envConfig.databaseUrl);
+  const ownedDatabase =
+    options.db === undefined
+      ? createOwnedServerDatabase(envConfig.databaseUrl)
+      : null;
+  const db =
+    options.db === undefined ? (ownedDatabase?.database ?? null) : options.db;
+  const realtimeAdmissionService =
+    options.realtimeAdmissionService ??
+    (db
+      ? new DatabaseRealtimeAdmissionService({
+          database: db,
+          logger: logger.child({ component: "realtime-admission" }),
+          instanceId: [
+            process.env.RAILWAY_REPLICA_ID?.trim() || "realtime",
+            crypto.randomUUID(),
+          ].join(":"),
+        })
+      : envConfig.operationalEnvironment === "production" ||
+          envConfig.operationalEnvironment === "preview"
+        ? createUnavailableRealtimeAdmissionService({
+            reason:
+              "DATABASE_URL is required for hosted realtime admission authority.",
+          })
+        : createLocalRealtimeAdmissionService());
   const operationalEventPublisher =
     options.operationalEventPublisher ??
     createDatabaseServerOperationalEventPublisher({
@@ -143,6 +190,12 @@ export const createAirJamServer = (
       ? authServiceInstance.getStartupConfigurationError()
       : null;
   if (startupConfigurationError) {
+    void ownedDatabase?.close().catch((error) => {
+      logger.error(
+        { err: error },
+        "Could not close PostgreSQL after startup validation failed",
+      );
+    });
     throw new Error(startupConfigurationError);
   }
 
@@ -174,12 +227,24 @@ export const createAirJamServer = (
     for (const session of rooms.values()) {
       controllerCount += session.controllers.size;
     }
+    const realtimeAdmission = realtimeAdmissionService.getStatus();
     res.json({
-      ok: !envConfig.maintenanceMode,
+      ok: true,
       uptime: Math.floor(process.uptime()),
       rooms: rooms.size,
       controllers: controllerCount,
       maintenance: envConfig.maintenanceMode,
+      realtimeAdmission,
+    });
+  });
+
+  app.get("/ready", (_, res) => {
+    const realtimeAdmission = realtimeAdmissionService.getStatus();
+    const ok = !envConfig.maintenanceMode && realtimeAdmission.acceptingNewWork;
+    res.status(ok ? 200 : 503).json({
+      ok,
+      maintenance: envConfig.maintenanceMode,
+      realtimeAdmission,
     });
   });
 
@@ -278,6 +343,7 @@ export const createAirJamServer = (
       socket,
       logger,
       roomManager: roomManagerInstance,
+      realtimeAdmissionService,
       rateLimitService: rateLimitServiceInstance,
       authService: authServiceInstance,
       runtimeUsagePublisher,
@@ -307,6 +373,9 @@ export const createAirJamServer = (
       });
     });
 
+    await realtimeAdmissionService.start();
+    admissionStarted = true;
+
     const address = httpServer.address();
     activePort =
       typeof address === "object" && address?.port
@@ -324,19 +393,78 @@ export const createAirJamServer = (
     return activePort;
   };
 
-  const stop = async (): Promise<void> => {
-    if (!httpServer.listening) {
-      return;
+  const drain = async (
+    timeoutMs: number = REALTIME_ADMISSION_POLICY.shutdownDrainTimeoutMs,
+  ): Promise<{
+    completed: boolean;
+    remainingRooms: number;
+    waitedMs: number;
+  }> => {
+    const startedAt = Date.now();
+    await realtimeAdmissionService.beginDrain();
+
+    while (roomManagerInstance.getAllRooms().size > 0) {
+      const remainingMs = timeoutMs - (Date.now() - startedAt);
+      if (remainingMs <= 0) break;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, Math.min(100, remainingMs));
+        timer.unref?.();
+      });
     }
 
-    roomManagerInstance.clearAllRooms(io, "Server shutting down");
+    const remainingRooms = roomManagerInstance.getAllRooms().size;
+    return {
+      completed: remainingRooms === 0,
+      remainingRooms,
+      waitedMs: Date.now() - startedAt,
+    };
+  };
 
-    await new Promise<void>((resolve) => {
-      io.close(() => resolve());
-    });
+  const stop = async (): Promise<void> => {
+    if (stopPromise) return stopPromise;
+    stopPromise = (async () => {
+      const cleanupErrors: unknown[] = [];
+      const attempt = async (cleanup: () => void | Promise<void>) => {
+        try {
+          await cleanup();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      };
 
-    activePort = null;
-    await devLogCollector?.flush();
+      if (admissionStarted) {
+        await attempt(() => realtimeAdmissionService.beginDrain());
+      }
+      await attempt(() =>
+        roomManagerInstance.clearAllRooms(io, "Server shutting down"),
+      );
+
+      if (httpServer.listening) {
+        await attempt(
+          () =>
+            new Promise<void>((resolve) => {
+              io.close(() => resolve());
+            }),
+        );
+      }
+
+      activePort = null;
+      if (admissionStarted) {
+        await attempt(() => realtimeAdmissionService.stop());
+        admissionStarted = false;
+      }
+      await attempt(async () => devLogCollector?.flush());
+      unsubscribeAdmissionFailure();
+      await attempt(async () => ownedDatabase?.close());
+
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(
+          cleanupErrors,
+          "Realtime server cleanup failed",
+        );
+      }
+    })();
+    return stopPromise;
   };
 
   const flushDevLogs = async (): Promise<void> => {
@@ -345,13 +473,57 @@ export const createAirJamServer = (
 
   const getPort = (): number | null => activePort;
 
+  const onTerminalFailure = (
+    listener: (failure: RealtimeAdmissionTerminalFailure) => void,
+  ): (() => void) => {
+    terminalFailureListeners.add(listener);
+    if (terminalFailure) {
+      queueMicrotask(() => {
+        if (terminalFailure && terminalFailureListeners.has(listener)) {
+          listener(terminalFailure);
+        }
+      });
+    }
+    return () => terminalFailureListeners.delete(listener);
+  };
+
+  const unsubscribeAdmissionFailure =
+    realtimeAdmissionService.onTerminalAuthorityLoss((failure) => {
+      if (terminalFailure) return;
+      terminalFailure = failure;
+      publishServerOperationalFailureSafely({
+        publisher: operationalEventPublisher,
+        logger,
+        input: {
+          code: "realtime_admission.instance_lease_lost",
+          failureClass: "dependency",
+          summary:
+            "The realtime server lost its database-backed admission authority.",
+          retryable: false,
+          component: "realtime-admission",
+          subject: { type: "service", id: "realtime_server" },
+          correlation: {
+            contractVersion: 1,
+            correlationId: `realtime-admission:${crypto.randomUUID()}`,
+          },
+          details: {
+            authorityFailureCode: failure.code,
+            action: "drain_and_stop_instance",
+          },
+        },
+      });
+      for (const listener of terminalFailureListeners) listener(failure);
+    });
+
   return {
     app,
     httpServer,
     io,
     start,
+    drain,
     stop,
     flushDevLogs,
     getPort,
+    onTerminalFailure,
   };
 };

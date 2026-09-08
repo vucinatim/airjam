@@ -8,6 +8,7 @@ import {
 } from "../../src/index";
 import { RateLimitService } from "../../src/services/rate-limit-service";
 import { RoomManager } from "../../src/services/room-manager";
+import { getHttpServerLoopbackUrl } from "./http-server-test-url";
 import {
   emitWithAck as emitWithAckWithTimeout,
   waitForSocketConnect,
@@ -77,8 +78,8 @@ export const setupServerTestHarness = (
       rateLimitService,
     });
 
-    const port = await runtime.start(0);
-    baseUrl = `http://127.0.0.1:${port}`;
+    await runtime.start(0);
+    baseUrl = getHttpServerLoopbackUrl(runtime.httpServer);
   });
 
   afterEach(async () => {

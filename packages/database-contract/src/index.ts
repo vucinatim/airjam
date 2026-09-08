@@ -7,7 +7,7 @@ import {
   type OperationalSloEvaluationV1,
   type OperationalSyntheticRunV1,
 } from "@air-jam/operations-contract";
-import { and, desc, eq, gt, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, lte, sql, type SQL } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -18,8 +18,10 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
@@ -209,6 +211,21 @@ export type OperationalQuotaPolicySnapshot = {
   limit: number;
 };
 
+export const REALTIME_ADMISSION_POLICY = Object.freeze({
+  contractVersion: 1,
+  sustainedRooms: 100,
+  burstRooms: 300,
+  sustainedControllers: 1_600,
+  burstControllers: 4_800,
+  creatorRooms: 50,
+  gameRooms: 50,
+  heartbeatIntervalMs: 10_000,
+  instanceLeaseTtlMs: 30_000,
+  maximumControllerResumeLeaseMs: 5 * 60_000,
+  shutdownDrainTimeoutMs: 25_000,
+  defaultRetryAfterSeconds: 15,
+});
+
 export const operationalBudgetEvidenceStatusValues = [
   "fresh",
   "stale",
@@ -232,12 +249,141 @@ export type OperationalBudgetAuthoritySnapshot = {
   newestSourceObservedAt: string | null;
 };
 
+export type OperationalAdmissionPolicyReason =
+  | "lane_paused"
+  | "budget_protection"
+  | "quota_exceeded"
+  | "control_unavailable"
+  | null;
+
+export type OperationalAdmissionPolicyDecision = {
+  outcome: "allowed" | "shadow_denied" | "denied";
+  reason: OperationalAdmissionPolicyReason;
+  retryAfterSeconds: number | null;
+  quotaEnforced: boolean;
+  projectedUsage: number | null;
+};
+
 export class OperationalAdmissionPolicyError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "OperationalAdmissionPolicyError";
   }
 }
+
+const operationalBudgetBlockedLanes: Readonly<
+  Record<OperationalBudgetState, ReadonlySet<OperationalLane>>
+> = Object.freeze({
+  normal: new Set<OperationalLane>(),
+  warning: new Set<OperationalLane>(),
+  protection: new Set<OperationalLane>(["preview_capacity"]),
+  near_ceiling: new Set<OperationalLane>([
+    "preview_capacity",
+    "browser_validation",
+    "release_processing",
+    "moderation",
+  ]),
+  ceiling: new Set<OperationalLane>([
+    "game_creation",
+    "game_listing",
+    "release_submission",
+    "artifact_ingestion",
+    "release_processing",
+    "browser_validation",
+    "moderation",
+    "media_ingestion",
+    "preview_capacity",
+    "realtime_room_admission",
+    "realtime_controller_admission",
+  ]),
+});
+
+export const decideOperationalAdmissionPolicy = ({
+  lane,
+  control,
+  budget,
+  quota = null,
+}: {
+  lane: OperationalLane;
+  control: OperationalLaneControlSnapshot | null;
+  budget: Pick<OperationalBudgetAuthoritySnapshot, "evidenceStatus" | "state">;
+  quota?: {
+    authorityAvailable: boolean;
+    current: number | null;
+    limit: number;
+    requestedAmount: number;
+  } | null;
+}): OperationalAdmissionPolicyDecision => {
+  if (control && control.lane !== lane) {
+    throw new OperationalAdmissionPolicyError(
+      `Lane control for ${control.lane} cannot decide ${lane}.`,
+    );
+  }
+  if (
+    quota &&
+    (!Number.isSafeInteger(quota.requestedAmount) || quota.requestedAmount < 0)
+  ) {
+    throw new OperationalAdmissionPolicyError(
+      "Requested quota amount must be a non-negative safe integer.",
+    );
+  }
+
+  const projectedUsage =
+    quota?.current === null || quota?.current === undefined
+      ? null
+      : quota.current + quota.requestedAmount;
+  if (projectedUsage !== null && !Number.isSafeInteger(projectedUsage)) {
+    throw new OperationalAdmissionPolicyError(
+      "Projected quota usage exceeds the safe integer range.",
+    );
+  }
+  const denied = (
+    reason: Exclude<OperationalAdmissionPolicyReason, null>,
+    retryAfterSeconds: number | null = null,
+  ): OperationalAdmissionPolicyDecision => ({
+    outcome: "denied",
+    reason,
+    retryAfterSeconds,
+    quotaEnforced: false,
+    projectedUsage,
+  });
+
+  if (!control) return denied("control_unavailable", 30);
+  if (control.mode === "paused") {
+    return denied("lane_paused", control.retryAfterSeconds);
+  }
+  if (budget.evidenceStatus !== "fresh" || budget.state === null) {
+    return denied("control_unavailable", 30);
+  }
+  if (operationalBudgetBlockedLanes[budget.state].has(lane)) {
+    return denied("budget_protection");
+  }
+  const quotaEnforced =
+    control.mode === "restricted" ||
+    budget.state === "protection" ||
+    budget.state === "near_ceiling" ||
+    budget.state === "ceiling";
+  if (quota && (!quota.authorityAvailable || quota.current === null)) {
+    return denied("control_unavailable", 30);
+  }
+  if (quota && projectedUsage !== null && projectedUsage > quota.limit) {
+    return {
+      outcome: quotaEnforced ? "denied" : "shadow_denied",
+      reason: "quota_exceeded",
+      retryAfterSeconds: null,
+      quotaEnforced,
+      projectedUsage,
+    };
+  }
+
+  return {
+    outcome: "allowed",
+    reason: null,
+    retryAfterSeconds: null,
+    quotaEnforced,
+    projectedUsage,
+  };
+};
 
 export const operationalBudgetEvidenceContractVersion = 1 as const;
 
@@ -429,7 +575,7 @@ export const createRuntimeDatabaseSchema = ({
     {
       id: text("id").primaryKey(),
       gameId: appIdGameIdColumn.notNull().unique(),
-      creatorId: text("creator_id"),
+      creatorId: text("creator_id").notNull(),
       key: text("key").notNull().unique(),
       allowedOrigins: jsonb("allowed_origins").$type<string[]>(),
       isActive: boolean("is_active").default(true).notNull(),
@@ -437,18 +583,24 @@ export const createRuntimeDatabaseSchema = ({
       lastUsedAt: timestamp("last_used_at"),
     },
     (table) => {
-      return appIdOwnerScope
-        ? [
-            foreignKey({
-              name: "app_ids_game_creator_fk",
-              columns: [table.gameId, table.creatorId],
-              foreignColumns: [
-                appIdOwnerScope.gameId,
-                appIdOwnerScope.creatorId,
-              ],
-            }),
-          ]
-        : [];
+      return [
+        ...(appIdOwnerScope
+          ? [
+              foreignKey({
+                name: "app_ids_game_creator_fk",
+                columns: [table.gameId, table.creatorId],
+                foreignColumns: [
+                  appIdOwnerScope.gameId,
+                  appIdOwnerScope.creatorId,
+                ],
+              }),
+            ]
+          : []),
+        check(
+          "app_ids_creator_id_not_null_check",
+          sql`${table.creatorId} is not null`,
+        ),
+      ];
     },
   );
 
@@ -702,6 +854,111 @@ export const createRuntimeDatabaseSchema = ({
       ),
       index("operational_lane_controls_mode_idx").on(table.mode),
       index("operational_lane_controls_updated_at_idx").on(table.updatedAt),
+    ],
+  );
+
+  const realtimeAdmissionInstances = pgTable(
+    "realtime_admission_instances",
+    {
+      instanceId: text("instance_id").primaryKey(),
+      leaseToken: text("lease_token").notNull().unique(),
+      startedAt: timestamp("started_at", { withTimezone: true })
+        .defaultNow()
+        .notNull(),
+      heartbeatAt: timestamp("heartbeat_at", { withTimezone: true })
+        .defaultNow()
+        .notNull(),
+      expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+      drainingAt: timestamp("draining_at", { withTimezone: true }),
+    },
+    (table) => [
+      index("realtime_admission_instances_expiry_idx").on(table.expiresAt),
+      check(
+        "realtime_admission_instances_required_text_check",
+        sql`length(btrim(${table.instanceId})) > 0 and length(btrim(${table.leaseToken})) > 0`,
+      ),
+      check(
+        "realtime_admission_instances_chronology_check",
+        sql`${table.heartbeatAt} >= ${table.startedAt} and ${table.expiresAt} > ${table.heartbeatAt} and (${table.drainingAt} is null or ${table.drainingAt} >= ${table.startedAt})`,
+      ),
+    ],
+  );
+
+  const realtimeRoomAdmissionLeases = pgTable(
+    "realtime_room_admission_leases",
+    {
+      roomId: text("room_id").primaryKey(),
+      leaseToken: text("lease_token").notNull().unique(),
+      instanceId: text("instance_id").notNull(),
+      appId: text("app_id"),
+      gameId: text("game_id"),
+      creatorId: text("creator_id"),
+      maxControllers: integer("max_controllers").notNull(),
+      admittedAt: timestamp("admitted_at", { withTimezone: true })
+        .defaultNow()
+        .notNull(),
+    },
+    (table) => [
+      foreignKey({
+        name: "realtime_room_admission_instance_fk",
+        columns: [table.instanceId],
+        foreignColumns: [realtimeAdmissionInstances.instanceId],
+      }).onDelete("cascade"),
+      index("realtime_room_admission_leases_creator_idx").on(table.creatorId),
+      index("realtime_room_admission_leases_game_idx").on(table.gameId),
+      index("realtime_room_admission_leases_instance_idx").on(table.instanceId),
+      unique("realtime_room_admission_leases_identity_key").on(
+        table.roomId,
+        table.instanceId,
+      ),
+      check(
+        "realtime_room_admission_leases_required_text_check",
+        sql`length(btrim(${table.roomId})) > 0 and length(btrim(${table.leaseToken})) > 0 and length(btrim(${table.instanceId})) > 0`,
+      ),
+      check(
+        "realtime_room_admission_leases_max_controllers_check",
+        sql`${table.maxControllers} > 0`,
+      ),
+    ],
+  );
+
+  const realtimeControllerAdmissionLeases = pgTable(
+    "realtime_controller_admission_leases",
+    {
+      roomId: text("room_id").notNull(),
+      controllerId: text("controller_id").notNull(),
+      leaseToken: text("lease_token").notNull().unique(),
+      instanceId: text("instance_id").notNull(),
+      admittedAt: timestamp("admitted_at", { withTimezone: true })
+        .defaultNow()
+        .notNull(),
+      disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+      resumeExpiresAt: timestamp("resume_expires_at", { withTimezone: true }),
+    },
+    (table) => [
+      primaryKey({ columns: [table.roomId, table.controllerId] }),
+      foreignKey({
+        name: "realtime_controller_admission_room_fk",
+        columns: [table.roomId, table.instanceId],
+        foreignColumns: [
+          realtimeRoomAdmissionLeases.roomId,
+          realtimeRoomAdmissionLeases.instanceId,
+        ],
+      }).onDelete("cascade"),
+      index("realtime_controller_admission_leases_resume_expiry_idx").on(
+        table.resumeExpiresAt,
+      ),
+      index("realtime_controller_admission_leases_instance_idx").on(
+        table.instanceId,
+      ),
+      check(
+        "realtime_controller_admission_leases_required_text_check",
+        sql`length(btrim(${table.roomId})) > 0 and length(btrim(${table.controllerId})) > 0 and length(btrim(${table.leaseToken})) > 0 and length(btrim(${table.instanceId})) > 0`,
+      ),
+      check(
+        "realtime_controller_admission_leases_resume_check",
+        sql`(${table.disconnectedAt} is null and ${table.resumeExpiresAt} is null) or (${table.disconnectedAt} is not null and ${table.resumeExpiresAt} > ${table.disconnectedAt})`,
+      ),
     ],
   );
 
@@ -1336,6 +1593,9 @@ export const createRuntimeDatabaseSchema = ({
     runtimeUsageGameSessionMetrics,
     runtimeUsageDailyGameMetrics,
     operationalLaneControls,
+    realtimeAdmissionInstances,
+    realtimeRoomAdmissionLeases,
+    realtimeControllerAdmissionLeases,
     operationalControlEvents,
     operationalBudgetCycles,
     operationalBudgetEvidence,
@@ -1354,6 +1614,8 @@ export type RuntimeDatabaseSchema = ReturnType<
 >;
 
 type OperationalSelectDatabase = Pick<PostgresJsDatabase, "select">;
+type OperationalAuthorityDatabase = OperationalSelectDatabase &
+  Pick<PostgresJsDatabase, "execute">;
 
 export type OperationalBudgetTables = Pick<
   RuntimeDatabaseSchema,
@@ -1364,6 +1626,9 @@ export type OperationalLaneControlTables = Pick<
   RuntimeDatabaseSchema,
   "operationalLaneControls"
 >;
+
+export type OperationalAuthorityTables = OperationalBudgetTables &
+  OperationalLaneControlTables;
 
 export const serializeOperationalBudgetCycle = (
   row: RuntimeDatabaseSchema["operationalBudgetCycles"]["$inferSelect"],
@@ -1429,6 +1694,25 @@ export const getDefaultOperationalLaneControl = (
   updatedAt: null,
 });
 
+const readOperationalAuthorityClock = async (
+  database: Pick<OperationalAuthorityDatabase, "execute">,
+): Promise<Date> => {
+  const rows = await database.execute(
+    sql<{
+      observedAt: Date | string;
+    }>`select clock_timestamp() as "observedAt"`,
+  );
+  const value = rows[0]?.observedAt;
+  const observedAt =
+    value instanceof Date ? value : new Date(String(value ?? ""));
+  if (Number.isNaN(observedAt.getTime())) {
+    throw new OperationalAdmissionPolicyError(
+      "PostgreSQL did not return the operational authority snapshot clock.",
+    );
+  }
+  return observedAt;
+};
+
 export const readOperationalBudgetSnapshot = async ({
   database,
   tables,
@@ -1481,3 +1765,38 @@ export const readOperationalLaneControl = async ({
     ? serializeOperationalLaneControl(row)
     : getDefaultOperationalLaneControl(lane);
 };
+export const readOperationalAuthoritySnapshot = async ({
+  database,
+  tables,
+  lane,
+  asOf,
+}: {
+  database: OperationalAuthorityDatabase;
+  tables: OperationalAuthorityTables;
+  lane: OperationalLane;
+  asOf?: Date;
+}): Promise<{
+  observedAt: Date;
+  control: OperationalLaneControlSnapshot;
+  budget: OperationalBudgetAuthoritySnapshot;
+}> => {
+  const observedAt = asOf ?? (await readOperationalAuthorityClock(database));
+  const [control, budget] = await Promise.all([
+    readOperationalLaneControl({ database, tables, lane }),
+    readOperationalBudgetSnapshot({ database, tables, asOf: observedAt }),
+  ]);
+  return {
+    observedAt,
+    control,
+    budget: deriveOperationalBudgetAuthoritySnapshot({
+      cycle: budget.cycle,
+      evidence: budget.evidence,
+      asOf: observedAt,
+    }),
+  };
+};
+
+export const realtimeAdmissionInstanceIsLive = (
+  expiresAt: AnyPgColumn,
+  asOf: Date | SQL = sql`clock_timestamp()`,
+) => gt(expiresAt, asOf);

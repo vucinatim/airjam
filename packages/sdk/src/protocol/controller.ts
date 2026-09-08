@@ -156,6 +156,7 @@ export interface ControllerJoinAck {
   resumed?: boolean;
   message?: string;
   code?: ErrorCode | string;
+  retryAfterSeconds?: number;
 }
 
 export const controllerPrivilegedGrantSchema = z.enum([

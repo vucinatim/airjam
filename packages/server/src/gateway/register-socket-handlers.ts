@@ -14,6 +14,7 @@ import {
 import { createSocketAuthorization } from "../policies/socket-authorization.js";
 import type { HostBootstrapAuthService } from "../services/auth-service.js";
 import type { RateLimitService } from "../services/rate-limit-service.js";
+import type { RealtimeAdmissionService } from "../services/realtime-admission-service.js";
 import type { RoomManager } from "../services/room-manager.js";
 import { registerControllerHandlers } from "./handlers/register-controller-handlers.js";
 import { registerDisconnectHandler } from "./handlers/register-disconnect-handler.js";
@@ -27,6 +28,7 @@ export interface RegisterSocketHandlersOptions {
   socket: AirJamSocket;
   logger: ServerLogger;
   roomManager: RoomManager;
+  realtimeAdmissionService: RealtimeAdmissionService;
   rateLimitService: RateLimitService;
   authService: HostBootstrapAuthService;
   runtimeUsagePublisher: RuntimeUsagePublisher;
@@ -45,6 +47,7 @@ export const registerSocketHandlers = ({
   socket,
   logger,
   roomManager,
+  realtimeAdmissionService,
   rateLimitService,
   authService,
   runtimeUsagePublisher,
@@ -97,6 +100,7 @@ export const registerSocketHandlers = ({
     socket,
     logger: socketLogger,
     roomManager,
+    realtimeAdmissionService,
     authService,
     runtimeUsagePublisher,
     operationalEventPublisher,

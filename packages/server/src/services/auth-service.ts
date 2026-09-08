@@ -21,6 +21,8 @@ type AuthMode = "disabled" | "required";
 export interface VerificationResult {
   isVerified: boolean;
   error?: string;
+  gameId?: string;
+  creatorId?: string;
 }
 
 export interface VerifyAppIdContext {
@@ -35,7 +37,6 @@ export interface VerifyHostBootstrapInput {
 
 export interface HostBootstrapVerificationResult extends VerificationResult {
   appId?: string;
-  gameId?: string;
   verifiedVia?: "appId" | "hostGrant";
   verifiedOrigin?: string;
   grantClaims?: HostGrantClaims;
@@ -233,6 +234,7 @@ export class AuthService {
         isVerified: true,
         appId: grantResult.claims.appId,
         gameId: keyRecord?.gameId,
+        creatorId: keyRecord?.creatorId ?? undefined,
         verifiedVia: "hostGrant",
         verifiedOrigin: normalizedOrigin,
         grantClaims: grantResult.claims,
@@ -243,6 +245,8 @@ export class AuthService {
     return {
       ...appIdResult,
       appId: appIdResult.isVerified ? appId : undefined,
+      gameId: appIdResult.gameId,
+      creatorId: appIdResult.creatorId,
       verifiedVia: appIdResult.isVerified ? "appId" : undefined,
       verifiedOrigin: appIdResult.isVerified ? normalizedOrigin : undefined,
     };
@@ -326,7 +330,11 @@ export class AuthService {
             );
           });
 
-        return { isVerified: true };
+        return {
+          isVerified: true,
+          gameId: keyRecord.gameId,
+          creatorId: keyRecord.creatorId ?? undefined,
+        };
       }
 
       return {
