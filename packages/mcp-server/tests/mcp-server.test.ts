@@ -61,6 +61,36 @@ const createStandaloneGameRoot = async (): Promise<string> => {
   return root;
 };
 
+const createStandaloneAgentGameRoot = async (): Promise<string> => {
+  const root = await createStandaloneGameRoot();
+  await mkdir(path.join(root, "src", "game", "contracts"), {
+    recursive: true,
+  });
+  await writeFile(
+    path.join(root, "src", "game", "contracts", "agent.ts"),
+    `export const agentContract = {
+  stores: { default: {} },
+  snapshotDescription: "Extensionless TypeScript fixture",
+  projectSnapshot: ({ stores }) => stores.default ?? {},
+  actions: {},
+};
+`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(root, "src", "airjam.config.ts"),
+    `import { agentContract } from "./game/contracts/agent";
+export const airjam = {
+  metadata: { slug: "standalone-agent-fixture" },
+  controllerPath: "/controller",
+  agent: agentContract,
+};
+`,
+    "utf8",
+  );
+  return root;
+};
+
 afterEach(async () => {
   await Promise.all(
     tempRoots
@@ -329,6 +359,37 @@ describe("createAirJamMcpServer", () => {
       context: {
         mode: "monorepo",
       },
+    });
+  });
+
+  it("inspects a scaffold-style extensionless TypeScript agent contract through the built MCP helper", async () => {
+    const root = await createStandaloneAgentGameRoot();
+    const server = await createAirJamMcpServer({ cwd: root });
+    const client = new Client({
+      name: "test-client",
+      version: "1.0.0",
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    const result = await client.callTool({
+      name: "airjam.inspect_game_agent_contract",
+      arguments: { cwd: root },
+    });
+
+    expect(result.isError).not.toBe(true);
+    const textBlock = (
+      result.content as Array<{ type: string; text?: string }>
+    ).find((block) => block.type === "text");
+    expect(JSON.parse(textBlock?.text ?? "{}")).toMatchObject({
+      hasContract: true,
+      snapshotDescription: "Extensionless TypeScript fixture",
+      actions: [],
     });
   });
 
