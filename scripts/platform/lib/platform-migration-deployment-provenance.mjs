@@ -71,6 +71,37 @@ export const inspectPlatformMigrationDeploymentProvenance = ({
   };
 };
 
+export const assertPlatformMigrationPlanAuthority = ({
+  authority,
+  databaseTarget,
+  providerCredentialsAvailable,
+}) => {
+  if (databaseTarget.kind === "unclassified") {
+    throw new Error(
+      "Production migration plans require a provider-attested Railway target; pass an explicit --railway-environment instead of a direct non-loopback database URL.",
+    );
+  }
+  const productionRailwayTarget =
+    databaseTarget.kind === "railway" &&
+    (databaseTarget.environmentName === "production" ||
+      databaseTarget.environmentName === null);
+  if (productionRailwayTarget && authority !== "production") {
+    throw new Error(
+      "A production Railway database target requires --authority production.",
+    );
+  }
+  if (authority === "production" && databaseTarget.kind !== "railway") {
+    throw new Error(
+      "Production migration plans require a provider-attested Railway target.",
+    );
+  }
+  if (authority === "production" && !providerCredentialsAvailable) {
+    throw new Error(
+      "Production migration plans require RAILWAY_PROJECT_TOKEN, RAILWAY_API_TOKEN, or RAILWAY_TOKEN for deployment verification.",
+    );
+  }
+};
+
 export const matchesPlatformMigrationProductionOrigin = ({
   platformOrigin,
   requestPolicy,

@@ -262,6 +262,35 @@ export const verifyRailwayReleaseOriginAttestation = async ({
       },
       { client },
     );
+    if (authority.status === "failed") {
+      return {
+        ...result,
+        status: "failed",
+        evidenceKind: "diagnostic",
+        productionEvidenceEligible: false,
+        providerVerification: {
+          status: "failed",
+          provider: "railway",
+          failureCode: authority.failureCode,
+          reason: authority.reason,
+        },
+        checks: [
+          ...result.checks,
+          {
+            id: "provider.railway-deployment",
+            status: "failed",
+            summary: "Railway provider verification could not be completed.",
+            evidence: {
+              failureCode: authority.failureCode,
+            },
+          },
+        ],
+        summary: {
+          passed: result.summary.passed,
+          failed: result.summary.failed + 1,
+        },
+      };
+    }
     const platformHostname = new URL(result.source.platformOrigin).hostname;
     const releaseHostname = new URL(result.source.releaseOrigin).hostname;
     const platformDomainMatched =

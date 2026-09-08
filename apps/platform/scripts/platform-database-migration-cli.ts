@@ -47,11 +47,15 @@ import {
   readPlatformMigrationCatalog,
 } from "../../../scripts/platform/lib/platform-migration-catalog.mjs";
 import {
+  assertPlatformMigrationPlanAuthority,
   inspectPlatformMigrationDeploymentProvenance,
   matchesPlatformMigrationApplicationDeploymentAuthority,
   matchesPlatformMigrationProductionOrigin,
 } from "../../../scripts/platform/lib/platform-migration-deployment-provenance.mjs";
-import { resolveRailwayMigrationDeploymentAuthority } from "../../../scripts/repo/lib/railway-deployment-authority.mjs";
+import {
+  railwayDeploymentAuthorityCredentialsAvailable,
+  resolveRailwayMigrationDeploymentAuthority,
+} from "../../../scripts/repo/lib/railway-deployment-authority.mjs";
 import {
   createPlatformDatabaseDump,
   platformBackupContractVersion,
@@ -370,17 +374,12 @@ const writePlan = async ({
     throw new Error(`Cannot plan from database state ${inspection.status}.`);
   }
   const authority = operation.authority ?? "local";
-  if (
-    (inspection.target.target.kind === "unclassified" ||
-      (inspection.target.target.kind === "railway" &&
-        (inspection.target.target.environmentName === "production" ||
-          inspection.target.target.environmentName === null))) &&
-    authority !== "production"
-  ) {
-    throw new Error(
-      "A production or unclassified database target requires --authority production.",
-    );
-  }
+  assertPlatformMigrationPlanAuthority({
+    authority,
+    databaseTarget: inspection.target.target,
+    providerCredentialsAvailable:
+      railwayDeploymentAuthorityCredentialsAvailable(),
+  });
   const source = sourceIdentity();
   if (authority === "production" && !source.clean) {
     throw new Error(
@@ -622,6 +621,12 @@ const applyPlanWithLockHeld = async ({
     "Idempotency key",
   );
   const { plan, digest } = readPlan(requireText(operation.plan, "Plan path"));
+  assertPlatformMigrationPlanAuthority({
+    authority: plan.authority,
+    databaseTarget: plan.target.target,
+    providerCredentialsAvailable:
+      railwayDeploymentAuthorityCredentialsAvailable(),
+  });
   const existing = await getPlatformSchemaMigrationRun({
     planDigest: digest,
   }).catch(() => null);
@@ -949,11 +954,6 @@ const verifyPlanWithLockHeld = async ({
   }
   if (platformUrl) {
     try {
-      if (!provenance) {
-        throw new Error(
-          "Deployment provenance is required for readiness proof.",
-        );
-      }
       const response = await fetch(`${platformUrl}/api/readiness`);
       deployment = (await response.json()) as Record<string, unknown>;
       if (response.status !== 200 && response.status !== 503) {
@@ -986,9 +986,16 @@ const verifyPlanWithLockHeld = async ({
       });
     } catch (error) {
       deployment = {
+        attempted: true,
         reachable: false,
         error: error instanceof Error ? error.message : String(error),
       };
+      if (plan.authority === "production") {
+        checks.push({
+          check: "deployment:production-origin-authority",
+          passed: false,
+        });
+      }
       checks.push({
         check: "deployment:application-identity",
         passed: false,

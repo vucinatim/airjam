@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { readPlatformMigrationCatalog } from "../../platform/lib/platform-migration-catalog.mjs";
 import {
+  assertPlatformMigrationPlanAuthority,
   inspectPlatformMigrationDeploymentProvenance,
   matchesPlatformMigrationApplicationDeploymentAuthority,
   matchesPlatformMigrationProductionOrigin,
@@ -228,6 +229,84 @@ test("production migration deployment authority composes provider and applicatio
       "mismatch",
     );
   }
+
+  const providerFailure = await resolveRailwayMigrationDeploymentAuthority(
+    { databaseTarget, deploymentId: "deployment-current" },
+    {
+      client: {
+        getDeployment: async () => {
+          throw new Error("provider unavailable");
+        },
+        getEnvironment: async () => environment,
+      },
+    },
+  );
+  assert.equal(providerFailure.status, "failed");
+  assert.equal(providerFailure.failureCode, "provider_request_failed");
+  assert.match(providerFailure.reason, /provider unavailable/u);
+
+  const unsupported = await resolveRailwayMigrationDeploymentAuthority(
+    {
+      databaseTarget: { kind: "unclassified" },
+      deploymentId: "deployment-current",
+    },
+    { client: {} },
+  );
+  assert.equal(unsupported.status, "failed");
+  assert.equal(unsupported.failureCode, "unsupported_target");
+});
+
+test("production migration planning refuses unverifiable targets and missing provider credentials", () => {
+  assert.throws(
+    () =>
+      assertPlatformMigrationPlanAuthority({
+        authority: "production",
+        databaseTarget: { kind: "unclassified" },
+        providerCredentialsAvailable: true,
+      }),
+    /provider-attested Railway target/u,
+  );
+  assert.throws(
+    () =>
+      assertPlatformMigrationPlanAuthority({
+        authority: "local",
+        databaseTarget: {
+          kind: "railway",
+          environmentName: "production",
+        },
+        providerCredentialsAvailable: true,
+      }),
+    /requires --authority production/u,
+  );
+  assert.throws(
+    () =>
+      assertPlatformMigrationPlanAuthority({
+        authority: "production",
+        databaseTarget: {
+          kind: "railway",
+          environmentName: "production",
+        },
+        providerCredentialsAvailable: false,
+      }),
+    /RAILWAY_PROJECT_TOKEN/u,
+  );
+  assert.doesNotThrow(() =>
+    assertPlatformMigrationPlanAuthority({
+      authority: "production",
+      databaseTarget: {
+        kind: "railway",
+        environmentName: "production",
+      },
+      providerCredentialsAvailable: true,
+    }),
+  );
+  assert.doesNotThrow(() =>
+    assertPlatformMigrationPlanAuthority({
+      authority: "local",
+      databaseTarget: { kind: "local" },
+      providerCredentialsAvailable: false,
+    }),
+  );
 });
 
 test("deployment provenance accepts an exact reviewed tree wrapped by a merge commit", () => {

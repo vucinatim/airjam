@@ -24,8 +24,11 @@ There is no second migration registry, hand-written production SQL path, or
 automatic production migration at application startup.
 
 Only loopback database hosts are classified as local. A direct non-loopback
-`DATABASE_URL` is deliberately unclassified and receives the same explicit
-production-authority gates as a production or unclassified Railway target.
+`DATABASE_URL` is deliberately unclassified and may be inspected, but it
+cannot be planned or applied through the production migration lifecycle.
+Production plans require an explicit provider-attested Railway project and
+environment so deployment verification can never become impossible after the
+schema has changed.
 
 ## Migration Policy
 
@@ -86,6 +89,13 @@ The lifecycle is:
    source commit with an identical Git tree. The application must report the
    same deployment ID and, whenever runtime revision metadata is available, the
    same revision. Only then does it restore lanes that the migration paused.
+
+Production `plan`, `apply`, and `verify` require one of
+`RAILWAY_PROJECT_TOKEN`, `RAILWAY_API_TOKEN`, or `RAILWAY_TOKEN` in the
+operator environment. Railway CLI login alone is not provider API authority.
+The prerequisite is checked before backup creation and again before apply, so
+an obviously unverifiable production plan cannot mutate the schema or pause a
+lane.
 
 Apply and verify share one PostgreSQL advisory lifecycle lock. This prevents
 concurrent operators from applying the same catalog or restoring the same lane
@@ -165,7 +175,9 @@ short:
 4. wait for the merge revision to become current and ready, then fetch `main`
    so that exact merge commit is present in the operator's local Git object
    database
-5. verify with `--deployment-id <provider-deployment>`; verification fetches
+5. ensure the operator environment still contains a Railway project or API
+   token; `railway login` by itself does not satisfy provider verification
+6. verify with `--deployment-id <provider-deployment>`; verification fetches
    the exact current successful Railway deployment and full Git revision from
    the provider, proves that revision contains the reviewed source with an
    identical tree, and requires the live platform origin to report the same

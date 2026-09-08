@@ -1,4 +1,8 @@
-import { createRailwayApiClient } from "./railway-api.mjs";
+import {
+  createRailwayApiClient,
+  RailwayApiError,
+  resolveRailwayApiToken,
+} from "./railway-api.mjs";
 
 const commitPattern = /^[0-9a-f]{40}$/u;
 
@@ -23,7 +27,10 @@ const resolveHostname = (value) => {
 };
 
 const emptyAuthority = Object.freeze({
+  status: "failed",
   provider: "railway",
+  failureCode: null,
+  reason: null,
   projectId: null,
   environmentId: null,
   environmentName: null,
@@ -42,11 +49,36 @@ const emptyAuthority = Object.freeze({
   checks: [],
 });
 
-const failedAuthority = (reason) => ({
+const failedAuthority = (reason, failureCode) => ({
   ...emptyAuthority,
-  status: "failed",
+  failureCode,
   reason,
 });
+
+const providerFailure = (error) => {
+  const message = normalizedText(
+    error instanceof Error ? error.message : String(error),
+  );
+  const failureCode =
+    error instanceof RailwayApiError && message?.startsWith("Missing Railway")
+      ? "credentials_missing"
+      : error instanceof RailwayApiError && message?.includes("timed out")
+        ? "request_timeout"
+        : error instanceof RailwayApiError &&
+            (error.status === 401 || error.status === 403)
+          ? "authorization_failed"
+          : "provider_request_failed";
+  return failedAuthority(
+    message
+      ? `Railway deployment authority lookup failed: ${message.slice(0, 500)}`
+      : "Railway deployment authority lookup failed.",
+    failureCode,
+  );
+};
+
+export const railwayDeploymentAuthorityCredentialsAvailable = (
+  env = process.env,
+) => Boolean(resolveRailwayApiToken(env).token);
 
 export const resolveCurrentRailwayDeploymentAuthority = async (
   {
@@ -65,6 +97,7 @@ export const resolveCurrentRailwayDeploymentAuthority = async (
   if (!expectedDeploymentId || !projectId) {
     return failedAuthority(
       "Railway deployment authority requires an exact deployment and project ID.",
+      "invalid_request",
     );
   }
 
@@ -74,6 +107,7 @@ export const resolveCurrentRailwayDeploymentAuthority = async (
     if (!deployment) {
       return failedAuthority(
         "Railway did not return the requested deployment authority.",
+        "deployment_not_found",
       );
     }
     const providerEnvironmentId = normalizedText(deployment.environmentId);
@@ -137,6 +171,8 @@ export const resolveCurrentRailwayDeploymentAuthority = async (
     return {
       status: checks.every((check) => check.passed) ? "verified" : "mismatch",
       provider: "railway",
+      failureCode: null,
+      reason: null,
       projectId: environment?.projectId ?? null,
       environmentId: environment?.id ?? null,
       environmentName: environment?.name ?? null,
@@ -154,8 +190,8 @@ export const resolveCurrentRailwayDeploymentAuthority = async (
       exactRevisionAvailable,
       checks,
     };
-  } catch {
-    return failedAuthority("Railway deployment authority lookup failed.");
+  } catch (error) {
+    return providerFailure(error);
   }
 };
 
@@ -167,6 +203,7 @@ export const resolveRailwayMigrationDeploymentAuthority = (
     return Promise.resolve(
       failedAuthority(
         "Migration deployment authority requires a Railway database target.",
+        "unsupported_target",
       ),
     );
   }
