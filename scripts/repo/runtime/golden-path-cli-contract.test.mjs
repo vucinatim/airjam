@@ -10,6 +10,7 @@ import {
   buildCodexPermissionArgs,
   buildGoldenPathCommandEnv,
   isControlCheckpointEvent,
+  startProjectScopedSessionBroker,
   verifyPrimaryRun,
 } from "../lib/golden-path-primary-run.mjs";
 import {
@@ -186,6 +187,49 @@ test("primary-run child environment drops inherited credentials and isolates cac
   assert.equal(environment.VITE_AIR_JAM_SERVER_URL, undefined);
   assert.equal(environment.AIR_JAM_DEV_PROXY_BACKEND_URL, undefined);
   assert.equal(environment.AIRJAM_DEVTOOLS_KNOWN_PORTS, "4400,5573");
+});
+
+test("primary-run launches the installed session broker outside the agent sandbox with project scope", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "airjam-g2-broker-"));
+  const projectDir = path.join(root, "project");
+  const entryPath = path.join(
+    projectDir,
+    "node_modules",
+    "@air-jam",
+    "cli",
+    "dist",
+    "index.js",
+  );
+  const logPath = path.join(root, "evidence", "broker.log");
+  fs.mkdirSync(path.dirname(entryPath), { recursive: true });
+  fs.writeFileSync(entryPath, "// installed candidate CLI\n");
+
+  let invocation;
+  const child = { pid: 4321 };
+  const launched = startProjectScopedSessionBroker({
+    projectDir,
+    commandEnv: { AIR_JAM_SERVER_PORT: "4400" },
+    logPath,
+    spawnImpl: (command, args, options) => {
+      invocation = { command, args, options };
+      return child;
+    },
+  });
+
+  assert.equal(launched?.child, child);
+  assert.equal(invocation.command, process.execPath);
+  assert.deepEqual(invocation.args, [
+    fs.realpathSync(entryPath),
+    "__session-broker",
+    "--dir",
+    projectDir,
+  ]);
+  assert.equal(invocation.options.cwd, projectDir);
+  assert.equal(invocation.options.env.AIR_JAM_SERVER_PORT, "4400");
+  assert.deepEqual(invocation.options.stdio.slice(0, 1), ["ignore"]);
+  assert.equal(fs.statSync(logPath).mode & 0o777, 0o600);
+
+  fs.rmSync(root, { recursive: true, force: true });
 });
 
 test("primary-run control checkpoint rejects failed MCP closes", () => {

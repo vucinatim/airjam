@@ -263,6 +263,43 @@ export const isControlCheckpointEvent = (event) => {
 
 const permissionProfileName = "airjamGoldenPath";
 
+export const startProjectScopedSessionBroker = ({
+  projectDir,
+  commandEnv,
+  logPath,
+  spawnImpl = spawn,
+}) => {
+  const entryPath = path.join(
+    projectDir,
+    "node_modules",
+    "@air-jam",
+    "cli",
+    "dist",
+    "index.js",
+  );
+  if (!fs.existsSync(entryPath)) return null;
+
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  const logFd = fs.openSync(logPath, "a", 0o600);
+  try {
+    return {
+      child: spawnImpl(
+        process.execPath,
+        [fs.realpathSync(entryPath), "__session-broker", "--dir", projectDir],
+        {
+          cwd: projectDir,
+          env: commandEnv,
+          stdio: ["ignore", logFd, logFd],
+        },
+      ),
+      entryPath,
+      logPath,
+    };
+  } finally {
+    fs.closeSync(logFd);
+  }
+};
+
 const tomlInlineStringMap = (value) =>
   `{${Object.entries(value)
     .map(([key, entry]) => `${JSON.stringify(key)}=${JSON.stringify(entry)}`)
@@ -877,6 +914,8 @@ export const runGoldenPathPrimary = async ({
 
   let registry;
   let codexChild;
+  let controllerSessionBroker;
+  let controllerSessionBrokerLaunch;
   let fault = null;
   let codexExitCode = null;
   let interruptedSignal = null;
@@ -1074,6 +1113,37 @@ export const runGoldenPathPrimary = async ({
       fs.mkdirSync(path.dirname(retainedTranscriptPath), { recursive: true });
       fs.appendFileSync(retainedTranscriptPath, record);
     };
+    const ensureControllerSessionBroker = () => {
+      if (controllerSessionBrokerLaunch) return;
+      const launched = startProjectScopedSessionBroker({
+        projectDir,
+        commandEnv,
+        logPath: path.join(
+          evidenceDir,
+          "environment",
+          "controller-session-broker.log",
+        ),
+      });
+      if (!launched) return;
+
+      controllerSessionBrokerLaunch = launched;
+      controllerSessionBroker = launched.child;
+      const record = {
+        owner: "run-controller",
+        scope: "isolated-project-only",
+        projectDir: "<run>/workspace/project",
+        entrypoint: "installed-@air-jam/cli",
+        pid: launched.child.pid,
+        startedAt: new Date().toISOString(),
+        logPath: "environment/controller-session-broker.log",
+      };
+      writeJson(
+        path.join(evidenceDir, "environment", "session-broker.json"),
+        record,
+      );
+      onProgress("session-broker:controller-owned");
+      bestEffortSyncEvidence();
+    };
     const processLine = (line) => {
       if (!line.trim()) return;
       const normalized = normalizeEvidenceText(line, { runRoot, registryUrl });
@@ -1085,6 +1155,12 @@ export const runGoldenPathPrimary = async ({
         return;
       }
       appendTranscript(event);
+      // Chromium cannot bootstrap from inside Codex's macOS Seatbelt profile.
+      // Start the existing project-scoped broker from the run controller as
+      // soon as the installed candidate CLI exists. The agent still owns all
+      // session operations through the public CLI/MCP contract, while the
+      // broker remains pinned to this isolated project directory.
+      ensureControllerSessionBroker();
       if (
         event.type === "item.completed" &&
         event.item?.type === "command_execution" &&
@@ -1331,6 +1407,9 @@ export const runGoldenPathPrimary = async ({
     process.removeListener("SIGTERM", handleSigterm);
     if (codexChild && codexChild.exitCode === null) {
       await stopChild(codexChild, { processGroup: true });
+    }
+    if (controllerSessionBroker && controllerSessionBroker.exitCode === null) {
+      await stopChild(controllerSessionBroker);
     }
     if (registry) await stopChild(registry.child);
     if (fs.existsSync(evidenceDir)) {
