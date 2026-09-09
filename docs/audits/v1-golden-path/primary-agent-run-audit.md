@@ -123,8 +123,8 @@ the five `0.9.3` candidate packages and then:
 
 The independent verifier reported `passed` with no failures or unevaluated
 criteria. The manifest indexes 149 artifacts; the durable transcript contains
-144 structured events. The retained transcript SHA-256 is
-`80e80f10747497e45947f1576128b5138b7c7497c72ee775cec5d769d0ff15b4`.
+144 structured events. The manifest in the durable evidence directory is the
+canonical digest inventory for the transcript and all 149 source artifacts.
 
 ## Attempt Ledger
 

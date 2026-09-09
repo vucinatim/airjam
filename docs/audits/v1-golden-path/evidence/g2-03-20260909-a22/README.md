@@ -24,10 +24,9 @@ including the SHA-256 identities of those omitted binaries and leaves. It is
 sufficient to audit the claim without turning the source repository into a
 runtime-artifact store.
 
-The transcript SHA-256 is
-`e08c1274072891b424da9135b92aedddfb202828e6817f42d6b825fdec663023`.
-The manifest SHA-256 is
-`0c66589c96a95f79f4db4c49377d6932b93e0b6da4598b4969257a4629560c9b`.
+`manifest.json` is the canonical owner of the transcript identity and complete
+149-artifact digest inventory. Maintained prose deliberately does not restate
+those generated identities.
 
 This proof certifies only the Codex primary lane (`G2-03`). It does not certify
 the independent Claude Desktop lane (`G2-04`), final cross-client replay
