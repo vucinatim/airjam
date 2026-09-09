@@ -9,6 +9,7 @@ import { verifyMcpStdioHandshake } from "../../lib/mcp-stdio-handshake.mjs";
 import {
   assertInstalledCandidateIntegrity,
   resolveGoldenPathTemporaryRoot,
+  warmCandidateRegistryDependencies,
 } from "../lib/golden-path-bootstrap.mjs";
 
 const candidateIntegrity = `sha512-${Buffer.from("candidate").toString("base64")}`;
@@ -81,6 +82,43 @@ test("golden-path temporary roots prefer explicit and runner-owned paths", () =>
     );
   } finally {
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("candidate registry preflight retries with disposable package stores", async () => {
+  const runRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "airjam-registry-preflight-test-"),
+  );
+  const commands = [];
+
+  try {
+    await warmCandidateRegistryDependencies({
+      runRoot,
+      packageArtifacts: [
+        { name: "@air-jam/cli", version: "0.9.3" },
+        { name: "create-airjam", version: "0.9.3" },
+      ],
+      run: (id, command, args, cwd) => {
+        commands.push({ id, command, args, cwd });
+        if (commands.length === 1) {
+          throw new Error("transient registry miss");
+        }
+      },
+    });
+
+    assert.equal(commands.length, 2);
+    assert.deepEqual(
+      commands.map(({ id }) => id),
+      ["registry:warm-dependencies:1", "registry:warm-dependencies:2"],
+    );
+    assert.ok(commands[1].args.includes("@air-jam/cli@0.9.3"));
+    assert.ok(commands[1].args.includes("create-airjam@0.9.3"));
+    assert.equal(
+      fs.existsSync(path.join(runRoot, "registry-preflight")),
+      false,
+    );
+  } finally {
+    fs.rmSync(runRoot, { recursive: true, force: true });
   }
 });
 

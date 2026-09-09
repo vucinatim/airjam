@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import {
   inspectGameAgentContract,
   invokeGameAction,
@@ -6,6 +7,7 @@ import {
   resolveGameActionPayload,
 } from "./agent.js";
 import {
+  captureControllerSessionVisuals,
   connectController,
   disconnectController,
   invokeHostAction,
@@ -23,6 +25,8 @@ import type {
   AirJamGameSessionActionDescriptor,
   AirJamGameSessionInspection,
   AirJamGameSessionSummary,
+  AirJamGameSessionVisualCaptureResult,
+  CaptureGameSessionVisualsOptions,
   CloseGameSessionOptions,
   CloseGameSessionResult,
   InvokeGameSessionActionOptions,
@@ -369,6 +373,38 @@ export const invokeGameSessionAction = async (
       snapshotAfterStatus,
       observedStateChange,
     },
+  };
+};
+
+export const captureGameSessionVisuals = async ({
+  gameSessionId,
+  timeoutMs,
+}: CaptureGameSessionVisualsOptions): Promise<AirJamGameSessionVisualCaptureResult> => {
+  const session = getRequiredGameSession(gameSessionId);
+  const captureId = `${new Date()
+    .toISOString()
+    .replaceAll(/[^0-9A-Za-z]/gu, "-")}-${randomUUID().slice(0, 8)}`;
+  const relativeDir = path.join(
+    ".airjam",
+    "artifacts",
+    "session-visuals",
+    gameSessionId,
+    captureId,
+  );
+  const captured = await captureControllerSessionVisuals({
+    controllerSessionId: session.summary.controllerSessionId,
+    relativeDir,
+    timeoutMs,
+  });
+  return {
+    ...session.summary,
+    contract: "air-jam-game-session-visual-capture/v1",
+    capturedAt: captured.capturedAt,
+    artifactDir: path.join(session.summary.cwd, relativeDir),
+    screenshots: captured.screenshots.map((screenshot) => ({
+      ...screenshot,
+      filePath: path.join(session.summary.cwd, screenshot.relativePath),
+    })),
   };
 };
 

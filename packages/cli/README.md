@@ -23,20 +23,29 @@ to compose:
 
 ```bash
 pnpm exec airjam status --dir .
+pnpm exec airjam evaluate --dir .
 pnpm exec airjam dev start --dir .
 pnpm exec airjam session open --dir .
 pnpm exec airjam session read <session-id> --dir .
 pnpm exec airjam session invoke <session-id> <action-id> --payload '{}'
+pnpm exec airjam session capture <session-id> --dir .
 pnpm exec airjam session close <session-id> --dir .
 pnpm exec airjam dev stop --dir .
 pnpm exec airjam reset local --dir .
 ```
 
+`airjam evaluate` is the canonical complete evaluation contract. It runs
+typecheck, lint, tests, and the production build, then returns every gate in one
+stable `air-jam-complete-evaluation/v1` JSON document. The MCP equivalent is
+`airjam.evaluate`; use individual quality gates only to narrow a failure.
+
 A semantic session starts or reuses the canonical Air Jam dev process, opens a
 real controller/runtime connection, exposes the game's published semantic
 actions and authoritative snapshot, and releases processes it created when the
 last session closes. The project-local broker is authenticated, loopback-only,
-and can be inspected or stopped explicitly:
+and can capture canonical desktop-host and phone-controller screenshots into
+the owning project's `.airjam/artifacts/session-visuals` directory. It can be
+inspected or stopped explicitly:
 
 ```bash
 pnpm exec airjam session broker status --dir .

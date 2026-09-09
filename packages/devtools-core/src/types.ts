@@ -19,6 +19,7 @@ import type {
   PlatformMachineUpdateOwnedGameInput,
   PlatformMachineUpdateOwnedGameResult,
 } from "@air-jam/sdk/platform-machine";
+import type { AirJamRuntimeOwnerScreenshot } from "./runtime-owner-protocol.js";
 
 export type AirJamProjectMode = "monorepo" | "standalone-game" | "unknown";
 
@@ -422,6 +423,21 @@ export type RunQualityGateOptions = {
   packageFilter?: string;
 };
 
+export type RunCompleteEvaluationOptions = {
+  cwd?: string;
+};
+
+export type AirJamCompleteEvaluationResult = {
+  contract: "air-jam-complete-evaluation/v1";
+  status: "passed" | "failed";
+  startedAt: string;
+  endedAt: string;
+  gates: Array<{
+    gate: AirJamQualityGate;
+    result: CommandResult;
+  }>;
+};
+
 export type AirJamDevMode = "standalone-dev" | "arcade-dev" | "arcade-test";
 
 export type AirJamVisualArtifactMode = "standalone-dev" | "arcade-built";
@@ -802,6 +818,11 @@ export type InvokeGameSessionActionOptions = {
   timeoutMs?: number;
 };
 
+export type CaptureGameSessionVisualsOptions = {
+  gameSessionId: string;
+  timeoutMs?: number;
+};
+
 export type CloseGameSessionOptions = {
   gameSessionId: string;
 };
@@ -843,6 +864,13 @@ export type InvokeGameSessionActionResult = AirJamGameSessionSummary & {
   actionId: string;
   lane: "player" | "host";
   invocation: InvokeGameActionResult;
+};
+
+export type AirJamGameSessionVisualCaptureResult = AirJamGameSessionSummary & {
+  contract: "air-jam-game-session-visual-capture/v1";
+  capturedAt: string;
+  artifactDir: string;
+  screenshots: Array<AirJamRuntimeOwnerScreenshot & { filePath: string }>;
 };
 
 export type CloseGameSessionResult = {

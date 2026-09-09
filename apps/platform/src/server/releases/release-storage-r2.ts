@@ -16,6 +16,7 @@ import {
 import { getReleaseStorageConfig } from "./release-storage-config";
 
 const METADATA_ORIGINAL_FILENAME_KEY = "original-filename";
+const METADATA_ORIGINAL_FILENAME_HEADER = `x-amz-meta-${METADATA_ORIGINAL_FILENAME_KEY}`;
 
 export const normalizeReleaseDownloadFilename = (filename: string): string => {
   const leaf = filename.replaceAll("\\", "/").split("/").at(-1)?.trim();
@@ -62,6 +63,7 @@ const createR2Client = (): S3Client => {
     credentials: {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,
+      ...(config.sessionToken ? { sessionToken: config.sessionToken } : {}),
     },
   });
 };
@@ -216,6 +218,11 @@ export const createR2ReleaseStorage = (): ReleaseStorage => {
 
       const url = await getSignedUrl(client, command, {
         expiresIn: config.uploadUrlTtlSeconds,
+        // Keep object metadata in an explicit signed request header. R2 accepts
+        // metadata hoisted into a presigned URL but does not persist it on the
+        // resulting object, which would make the immutable upload facts fail
+        // closed during worker observation.
+        unhoistableHeaders: new Set([METADATA_ORIGINAL_FILENAME_HEADER]),
       });
 
       return {
@@ -225,6 +232,7 @@ export const createR2ReleaseStorage = (): ReleaseStorage => {
         headers: {
           "content-type": contentType,
           "if-none-match": "*",
+          [METADATA_ORIGINAL_FILENAME_HEADER]: originalFilename,
         },
         expiresAt: new Date(
           Date.now() + config.uploadUrlTtlSeconds * 1_000,

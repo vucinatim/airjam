@@ -1,8 +1,19 @@
+import { verifyCloudflareR2TemporaryCredentials } from "./cloudflare-r2-temporary-credentials.mjs";
+import { resolveRailwayDatabaseUrl } from "./platform-database-target.mjs";
 import { createRailwayApiClient } from "./railway-api.mjs";
 
 const railwayPlatformConfigFile = "/apps/platform/railway.json";
 const railwayBrowserWorkerConfigFile =
   "/packages/release-browser-worker/railway.json";
+export const canonicalGoldenPathApplicationServiceNames = Object.freeze([
+  "air-jam-platform",
+  "air-jam-platform-worker",
+  "air-jam-release-browser-worker",
+  "air-jam-server",
+]);
+const canonicalApplicationServiceNames = new Set(
+  canonicalGoldenPathApplicationServiceNames,
+);
 const railwayReadyDeploymentStatuses = new Set(["SUCCESS", "SLEEPING"]);
 
 // Equal production/staging values fail closed unless the variable is explicitly
@@ -13,6 +24,7 @@ const allowedSharedVariableNames = new Set([
   "AIRJAM_BROWSER_WORKER_HEADLESS",
   "AIRJAM_BROWSER_WORKER_HOST",
   "AIRJAM_BROWSER_WORKER_PORT",
+  "AIRJAM_PLATFORM_WORKER_BUDGET_REFRESH_MS",
   "AIRJAM_RELEASES_BROWSER_EXECUTABLE_PATH",
   "AIRJAM_RELEASES_BROWSER_NAVIGATION_TIMEOUT_MS",
   "AIRJAM_RELEASES_BROWSER_VIEWPORT_HEIGHT",
@@ -23,6 +35,7 @@ const allowedSharedVariableNames = new Set([
   "AIRJAM_RELEASES_OPENAI_MODERATION_MODEL",
   "AIRJAM_RELEASES_OPENAI_TIMEOUT_MS",
   "AIRJAM_RELEASES_R2_ACCOUNT_ID",
+  "AIRJAM_RELEASES_R2_ACCESS_KEY_ID",
   "AIRJAM_RELEASES_R2_ENDPOINT",
   "AIRJAM_RELEASES_UPLOAD_URL_TTL_SECONDS",
   "AIRJAM_DEV_LOG_EVENTS",
@@ -45,6 +58,7 @@ const allowedSharedVariableNames = new Set([
   "AIR_JAM_SYSTEM_APP_ID",
   "AIR_JAM_TRUST_PROXY_HEADERS",
   "AIR_JAM_WORKSPACE_ROOT",
+  "AIRJAM_DEPLOYMENT_DEPENDS_ON_PLATFORM",
   "HOSTNAME",
   "NEXT_PUBLIC_AUTH_GITHUB_ENABLED",
   "NODE_ENV",
@@ -52,6 +66,7 @@ const allowedSharedVariableNames = new Set([
   "RAILWAY_DOCKERFILE_PATH",
   "RAILWAY_PROJECT_ID",
   "RAILWAY_PROJECT_NAME",
+  "RAILWAY_PRIVATE_DOMAIN",
   "RAILWAY_SERVICE_ID",
   "RAILWAY_SERVICE_NAME",
 ]);
@@ -156,7 +171,7 @@ const assertProductionValuesNotReused = ({
   }
 };
 
-const findPostgresInstance = (environment) =>
+export const findGoldenPathPostgresInstance = (environment) =>
   environment.serviceInstances.find(
     (instance) =>
       !instance.railwayConfigFile &&
@@ -167,11 +182,11 @@ const resolveApplicationServicePairs = ({
   environment,
   primaryEnvironment,
 }) => {
-  const stagingInstances = environment.serviceInstances.filter(
-    (instance) => instance.railwayConfigFile,
+  const stagingInstances = environment.serviceInstances.filter((instance) =>
+    canonicalApplicationServiceNames.has(instance.serviceName),
   );
   const primaryInstances = primaryEnvironment.serviceInstances.filter(
-    (instance) => instance.railwayConfigFile,
+    (instance) => canonicalApplicationServiceNames.has(instance.serviceName),
   );
   const stagingServiceIds = new Set(
     stagingInstances.map((instance) => instance.serviceId),
@@ -180,6 +195,8 @@ const resolveApplicationServicePairs = ({
     primaryInstances.map((instance) => instance.serviceId),
   );
   if (
+    stagingInstances.length !== canonicalApplicationServiceNames.size ||
+    primaryInstances.length !== canonicalApplicationServiceNames.size ||
     stagingServiceIds.size !== primaryServiceIds.size ||
     [...stagingServiceIds].some(
       (serviceId) => !primaryServiceIds.has(serviceId),
@@ -210,10 +227,12 @@ const resolveApplicationServicePairs = ({
 const assertDatabaseIsolation = ({
   environment,
   primaryEnvironment,
+  stagingDatabaseUrl,
+  primaryDatabaseUrl,
   serviceVariablePairs,
 }) => {
-  const stagingPostgres = findPostgresInstance(environment);
-  const primaryPostgres = findPostgresInstance(primaryEnvironment);
+  const stagingPostgres = findGoldenPathPostgresInstance(environment);
+  const primaryPostgres = findGoldenPathPostgresInstance(primaryEnvironment);
   if (
     !stagingPostgres?.id ||
     !primaryPostgres?.id ||
@@ -229,16 +248,38 @@ const assertDatabaseIsolation = ({
     stagingVariables,
     primaryVariables,
   } of serviceVariablePairs) {
-    const stagingDatabaseUrl = variableValue(stagingVariables, "DATABASE_URL");
-    const primaryDatabaseUrl = variableValue(primaryVariables, "DATABASE_URL");
+    const applicationStagingDatabaseUrl = variableValue(
+      stagingVariables,
+      "DATABASE_URL",
+    );
+    const applicationPrimaryDatabaseUrl = variableValue(
+      primaryVariables,
+      "DATABASE_URL",
+    );
     if (
-      stagingDatabaseUrl &&
-      primaryDatabaseUrl &&
-      stagingDatabaseUrl === primaryDatabaseUrl &&
-      !isRailwayEnvironmentScopedUrl(stagingDatabaseUrl)
+      applicationStagingDatabaseUrl &&
+      applicationPrimaryDatabaseUrl &&
+      applicationStagingDatabaseUrl === applicationPrimaryDatabaseUrl &&
+      !isRailwayEnvironmentScopedUrl(applicationStagingDatabaseUrl)
     ) {
       throw new Error(
         `Railway staging ${serviceName} DATABASE_URL resolves to the same non-scoped database as production.`,
+      );
+    }
+  }
+
+  // Deployment isolation does not need a locally reachable database URL. The
+  // external-agent runtime supplies both URLs and therefore activates this
+  // stronger identity-provisioning assertion.
+  if (stagingDatabaseUrl !== undefined || primaryDatabaseUrl !== undefined) {
+    if (!stagingDatabaseUrl || !primaryDatabaseUrl) {
+      throw new Error(
+        "Railway staging and production must expose locally reachable Postgres targets for rehearsal attestation.",
+      );
+    }
+    if (stagingDatabaseUrl === primaryDatabaseUrl) {
+      throw new Error(
+        "Railway staging Postgres resolves to the same public target as production.",
       );
     }
   }
@@ -257,9 +298,12 @@ const assertReleaseIsolation = ({
     (pair) =>
       pair.stagingInstance.railwayConfigFile === railwayBrowserWorkerConfigFile,
   );
-  if (!platformPair || !browserWorkerPair) {
+  const operationalWorkerPair = serviceVariablePairs.find(
+    (pair) => pair.stagingInstance.serviceName === "air-jam-platform-worker",
+  );
+  if (!platformPair || !browserWorkerPair || !operationalWorkerPair) {
     throw new Error(
-      "Railway staging must include the canonical platform and release browser worker services.",
+      "Railway staging must include the canonical platform, operational worker, and release browser worker services.",
     );
   }
 
@@ -284,6 +328,7 @@ const assertReleaseIsolation = ({
   for (const name of [
     "AIRJAM_RELEASES_R2_ACCESS_KEY_ID",
     "AIRJAM_RELEASES_R2_SECRET_ACCESS_KEY",
+    "AIRJAM_RELEASES_R2_SESSION_TOKEN",
     "AIRJAM_RELEASES_INTERNAL_ACCESS_TOKEN",
   ]) {
     requireRailwayVariable(
@@ -292,6 +337,68 @@ const assertReleaseIsolation = ({
       environment.name,
       platformPair.serviceName,
     );
+  }
+
+  const stagingAccountId = requireRailwayVariable(
+    platformPair.stagingVariables,
+    "AIRJAM_RELEASES_R2_ACCOUNT_ID",
+    environment.name,
+    platformPair.serviceName,
+  );
+  const primaryAccountId = requireRailwayVariable(
+    platformPair.primaryVariables,
+    "AIRJAM_RELEASES_R2_ACCOUNT_ID",
+    primaryEnvironment.name,
+    platformPair.serviceName,
+  );
+  if (stagingAccountId !== primaryAccountId) {
+    throw new Error(
+      "Railway staging and production R2 account identities do not match the delegated credential authority.",
+    );
+  }
+  const endpoint =
+    variableValue(
+      platformPair.stagingVariables,
+      "AIRJAM_RELEASES_R2_ENDPOINT",
+    ) ?? `https://${stagingAccountId}.r2.cloudflarestorage.com`;
+  const temporaryCredential = verifyCloudflareR2TemporaryCredentials({
+    endpoint,
+    accountId: stagingAccountId,
+    parentAccessKeyId: requireRailwayVariable(
+      platformPair.primaryVariables,
+      "AIRJAM_RELEASES_R2_ACCESS_KEY_ID",
+      primaryEnvironment.name,
+      platformPair.serviceName,
+    ),
+    parentSecretAccessKey: requireRailwayVariable(
+      platformPair.primaryVariables,
+      "AIRJAM_RELEASES_R2_SECRET_ACCESS_KEY",
+      primaryEnvironment.name,
+      platformPair.serviceName,
+    ),
+    bucket: stagingBucket,
+    accessKeyId: platformPair.stagingVariables.AIRJAM_RELEASES_R2_ACCESS_KEY_ID,
+    secretAccessKey:
+      platformPair.stagingVariables.AIRJAM_RELEASES_R2_SECRET_ACCESS_KEY,
+    sessionToken:
+      platformPair.stagingVariables.AIRJAM_RELEASES_R2_SESSION_TOKEN,
+  });
+  for (const name of [
+    "AIRJAM_RELEASES_R2_BUCKET",
+    "AIRJAM_RELEASES_R2_ACCOUNT_ID",
+    "AIRJAM_RELEASES_R2_ACCESS_KEY_ID",
+    "AIRJAM_RELEASES_R2_SECRET_ACCESS_KEY",
+    "AIRJAM_RELEASES_R2_SESSION_TOKEN",
+    "AIRJAM_RELEASES_INTERNAL_ACCESS_TOKEN",
+  ]) {
+    if (
+      variableValue(operationalWorkerPair.stagingVariables, name) !==
+      variableValue(platformPair.stagingVariables, name)
+    ) {
+      throw new Error(
+        `Railway staging operational worker must share platform ${name}.`,
+      );
+    }
   }
 
   const browserEndpoint = variableValue(
@@ -307,7 +414,22 @@ const assertReleaseIsolation = ({
       `Railway ${environment.name} ${platformPair.serviceName} must configure a browser endpoint or executable.`,
     );
   }
-  if (!browserEndpoint) return;
+  if (!browserEndpoint) return temporaryCredential;
+
+  if (
+    variableValue(
+      operationalWorkerPair.stagingVariables,
+      "AIRJAM_RELEASES_BROWSER_ACCESS_TOKEN",
+    ) !==
+    variableValue(
+      platformPair.stagingVariables,
+      "AIRJAM_RELEASES_BROWSER_ACCESS_TOKEN",
+    )
+  ) {
+    throw new Error(
+      "Railway staging operational worker must share platform AIRJAM_RELEASES_BROWSER_ACCESS_TOKEN.",
+    );
+  }
 
   requireRailwayVariable(
     platformPair.stagingVariables,
@@ -352,11 +474,18 @@ const assertReleaseIsolation = ({
       "Railway staging browser endpoint does not target its release browser worker.",
     );
   }
+
+  return {
+    ...temporaryCredential,
+    endpointHostname: new URL(endpoint).hostname,
+  };
 };
 
 export const assertGoldenPathStagingEnvironmentIsolation = ({
   environment,
   primaryEnvironment,
+  stagingDatabaseUrl,
+  primaryDatabaseUrl,
   serviceVariablePairs,
 }) => {
   for (const pair of serviceVariablePairs) {
@@ -375,9 +504,11 @@ export const assertGoldenPathStagingEnvironmentIsolation = ({
   assertDatabaseIsolation({
     environment,
     primaryEnvironment,
+    stagingDatabaseUrl,
+    primaryDatabaseUrl,
     serviceVariablePairs,
   });
-  assertReleaseIsolation({
+  const releaseStorageCredential = assertReleaseIsolation({
     environment,
     primaryEnvironment,
     serviceVariablePairs,
@@ -390,15 +521,15 @@ export const assertGoldenPathStagingEnvironmentIsolation = ({
     databaseTargetDistinctOrProviderScoped: true,
     productionVariableValuesNotReused: true,
     releaseStorageIsolated: true,
+    releaseStorageCredential,
     releasePipelineIsolated: true,
   };
 };
 
-export const resolveGoldenPathRailwayStagingTarget = async ({
+export const resolveGoldenPathStagingEnvironmentPair = async ({
   projectId,
   environmentId,
-  client = createRailwayApiClient(),
-  fetchImpl = fetch,
+  client,
 }) => {
   if (!projectId || !environmentId) {
     throw new Error(
@@ -447,28 +578,52 @@ export const resolveGoldenPathRailwayStagingTarget = async ({
   if (environment.canAccess === false) {
     throw new Error(`Railway environment ${environmentId} is not accessible.`);
   }
+  if (environment.isEphemeral !== true) {
+    throw new Error(
+      "Golden-path staging must be an ephemeral Railway environment.",
+    );
+  }
+  if (environment.sourceEnvironment?.id !== primaryEnvironment.id) {
+    throw new Error(
+      "Golden-path staging must be cloned from the canonical production topology.",
+    );
+  }
 
   const servicePairs = resolveApplicationServicePairs({
     environment,
     primaryEnvironment,
   });
-  const platformPair = servicePairs.find(
-    (pair) =>
-      pair.stagingInstance.railwayConfigFile === railwayPlatformConfigFile,
-  );
-  if (!platformPair) {
+  const stagingPostgres = findGoldenPathPostgresInstance(environment);
+  const primaryPostgres = findGoldenPathPostgresInstance(primaryEnvironment);
+  if (
+    !stagingPostgres?.id ||
+    !primaryPostgres?.id ||
+    stagingPostgres.id === primaryPostgres.id
+  ) {
     throw new Error(
-      `Railway environment ${environmentId} has no canonical Air Jam platform service.`,
-    );
-  }
-  const deployment = platformPair.stagingInstance.latestDeployment;
-  if (!deployment || !railwayReadyDeploymentStatuses.has(deployment.status)) {
-    throw new Error(
-      `Railway staging platform deployment is ${deployment?.status ?? "missing"}; expected SUCCESS or SLEEPING.`,
+      "Railway staging must expose a Postgres service instance distinct from production.",
     );
   }
 
-  const serviceVariablePairs = await Promise.all(
+  return {
+    project,
+    environment,
+    primaryEnvironment,
+    primaryEnvironmentId,
+    servicePairs,
+    stagingPostgres,
+    primaryPostgres,
+  };
+};
+
+export const collectGoldenPathServiceVariablePairs = async ({
+  client,
+  projectId,
+  environmentId,
+  primaryEnvironmentId,
+  servicePairs,
+}) =>
+  Promise.all(
     servicePairs.map(async ({ stagingInstance, primaryInstance }) => {
       const [stagingVariables, primaryVariables] = await Promise.all([
         client.getVariables({
@@ -491,9 +646,82 @@ export const resolveGoldenPathRailwayStagingTarget = async ({
       };
     }),
   );
+
+export const resolveGoldenPathRailwayStagingRuntime = async ({
+  projectId,
+  environmentId,
+  client = createRailwayApiClient(),
+  fetchImpl = fetch,
+}) => {
+  const {
+    project,
+    environment,
+    primaryEnvironment,
+    primaryEnvironmentId,
+    servicePairs,
+    stagingPostgres,
+    primaryPostgres,
+  } = await resolveGoldenPathStagingEnvironmentPair({
+    projectId,
+    environmentId,
+    client,
+  });
+  const platformPair = servicePairs.find(
+    (pair) =>
+      pair.stagingInstance.railwayConfigFile === railwayPlatformConfigFile,
+  );
+  if (!platformPair) {
+    throw new Error(
+      `Railway environment ${environmentId} has no canonical Air Jam platform service.`,
+    );
+  }
+  for (const pair of servicePairs) {
+    const serviceDeployment = pair.stagingInstance.latestDeployment;
+    if (
+      !serviceDeployment ||
+      !railwayReadyDeploymentStatuses.has(serviceDeployment.status)
+    ) {
+      throw new Error(
+        `Railway staging ${pair.stagingInstance.serviceName} deployment is ${serviceDeployment?.status ?? "missing"}; expected SUCCESS or SLEEPING.`,
+      );
+    }
+  }
+  const deployment = platformPair.stagingInstance.latestDeployment;
+
+  const [
+    serviceVariablePairs,
+    stagingPostgresVariables,
+    primaryPostgresVariables,
+  ] = await Promise.all([
+    collectGoldenPathServiceVariablePairs({
+      client,
+      projectId,
+      environmentId,
+      primaryEnvironmentId,
+      servicePairs,
+    }),
+    client.getVariables({
+      projectId,
+      environmentId,
+      serviceId: stagingPostgres.serviceId,
+    }),
+    client.getVariables({
+      projectId,
+      environmentId: primaryEnvironmentId,
+      serviceId: primaryPostgres.serviceId,
+    }),
+  ]);
+  const stagingDatabaseUrl = resolveRailwayDatabaseUrl(
+    stagingPostgresVariables,
+  );
+  const primaryDatabaseUrl = resolveRailwayDatabaseUrl(
+    primaryPostgresVariables,
+  );
   const environmentIsolation = assertGoldenPathStagingEnvironmentIsolation({
     environment,
     primaryEnvironment,
+    stagingDatabaseUrl,
+    primaryDatabaseUrl,
     serviceVariablePairs,
   });
 
@@ -535,7 +763,7 @@ export const resolveGoldenPathRailwayStagingTarget = async ({
     );
   }
 
-  return {
+  const target = {
     provider: "railway",
     projectId,
     projectName: project.name,
@@ -552,4 +780,9 @@ export const resolveGoldenPathRailwayStagingTarget = async ({
     verifiedAt: new Date().toISOString(),
     productionAllowed: false,
   };
+
+  return { target, databaseUrl: stagingDatabaseUrl };
 };
+
+export const resolveGoldenPathRailwayStagingTarget = async (options) =>
+  (await resolveGoldenPathRailwayStagingRuntime(options)).target;

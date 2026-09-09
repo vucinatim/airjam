@@ -1,0 +1,146 @@
+{
+  "contract": "air-jam-golden-path-evidence/v1",
+  "runId": "g2-03-20260909-a22",
+  "records": [
+    {
+      "id": "initial-passing-checkpoint",
+      "command": "pnpm exec airjam evaluate --dir .",
+      "startedAt": "2026-09-09T04:13:05.774Z",
+      "finishedAt": "2026-09-09T04:13:16.578Z",
+      "result": "passed",
+      "exitCode": 0,
+      "output": "commands/evaluate-initial.txt",
+      "gates": [
+        {
+          "gate": "typecheck",
+          "exitCode": 0
+        },
+        {
+          "gate": "lint",
+          "exitCode": 0
+        },
+        {
+          "gate": "test",
+          "exitCode": 0
+        },
+        {
+          "gate": "build",
+          "exitCode": 0
+        }
+      ]
+    },
+    {
+      "id": "injected-fault-test",
+      "command": "pnpm run test",
+      "timestamp": "2026-09-09T04:14:58.001878+00:00",
+      "result": "failed",
+      "exitCode": 1,
+      "output": "commands/fault-domain-tests.txt"
+    },
+    {
+      "id": "command-evaluate-initial",
+      "command": [
+        "pnpm",
+        "exec",
+        "airjam",
+        "evaluate",
+        "--dir",
+        "."
+      ],
+      "startedAt": "2026-09-09T04:13:05.292441+00:00",
+      "finishedAt": "2026-09-09T04:13:16.596350+00:00",
+      "result": "passed",
+      "exitCode": 0,
+      "output": "commands/evaluate-initial.txt",
+      "sha256": "5bf6b7d7d7e69d166d91029b6fa1a20cbacd50452166e688de7c63cce2610204",
+      "gates": [
+        {
+          "gate": "typecheck",
+          "exitCode": 0
+        },
+        {
+          "gate": "lint",
+          "exitCode": 0
+        },
+        {
+          "gate": "test",
+          "exitCode": 0
+        },
+        {
+          "gate": "build",
+          "exitCode": 0
+        }
+      ]
+    },
+    {
+      "id": "command-evaluate-repaired",
+      "command": [
+        "pnpm",
+        "exec",
+        "airjam",
+        "evaluate",
+        "--dir",
+        "."
+      ],
+      "startedAt": "2026-09-09T04:14:58.039982+00:00",
+      "finishedAt": "2026-09-09T04:15:06.292863+00:00",
+      "result": "passed",
+      "exitCode": 0,
+      "output": "commands/evaluate-repaired.txt",
+      "sha256": "db915aab7baa1413c7baf229f79cfdc7c4539ff675cacc7bd0042cbe52534679",
+      "gates": [
+        {
+          "gate": "typecheck",
+          "exitCode": 0
+        },
+        {
+          "gate": "lint",
+          "exitCode": 0
+        },
+        {
+          "gate": "test",
+          "exitCode": 0
+        },
+        {
+          "gate": "build",
+          "exitCode": 0
+        }
+      ]
+    },
+    {
+      "id": "command-evaluate-final",
+      "command": [
+        "pnpm",
+        "exec",
+        "airjam",
+        "evaluate",
+        "--dir",
+        "."
+      ],
+      "startedAt": "2026-09-09T04:19:37.987819+00:00",
+      "finishedAt": "2026-09-09T04:19:46.420764+00:00",
+      "result": "passed",
+      "exitCode": 0,
+      "output": "commands/evaluate-final.txt",
+      "sha256": "f42438b9aa84dbcf5f7c08ca99a44c3741238ab22d6809c5562c17264f4149d1",
+      "gates": [
+        {
+          "gate": "typecheck",
+          "exitCode": 0
+        },
+        {
+          "gate": "lint",
+          "exitCode": 0
+        },
+        {
+          "gate": "test",
+          "exitCode": 0
+        },
+        {
+          "gate": "build",
+          "exitCode": 0
+        }
+      ]
+    }
+  ]
+}

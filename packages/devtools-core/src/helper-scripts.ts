@@ -33,8 +33,17 @@ export const resolveDevtoolsHelperScript = (fileName: string): string => {
 };
 
 const typescriptExtensions = new Set([".ts", ".tsx", ".mts", ".cts"]);
+const projectTypescriptLoaderHelpers = new Set([
+  "agent-contract",
+  "inspect-airjam-agent",
+  "list-visual-scenarios",
+  "run-visual-capture",
+]);
 
 export const resolveDevtoolsHelperArgs = (helperPath: string): string[] =>
-  typescriptExtensions.has(path.extname(helperPath))
+  typescriptExtensions.has(path.extname(helperPath)) ||
+  projectTypescriptLoaderHelpers.has(
+    path.basename(helperPath, path.extname(helperPath)),
+  )
     ? ["--import", require.resolve("tsx"), helperPath]
     : [helperPath];

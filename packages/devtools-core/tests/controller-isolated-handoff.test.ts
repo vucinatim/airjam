@@ -100,8 +100,44 @@ class MockSocket {
 class FakeChildProcess extends EventEmitter {
   public readonly stdout = new EventEmitter();
   public readonly stderr = new EventEmitter();
+  public connected = true;
   public killed = false;
   public exitCode: number | null = null;
+
+  send(
+    message: {
+      type: string;
+      requestId: string;
+      relativeDir: string;
+    },
+    callback?: (error: Error | null) => void,
+  ): boolean {
+    callback?.(null);
+    queueMicrotask(() => {
+      this.emit("message", {
+        type: "air-jam-runtime-owner.capture-visuals-result/v1",
+        requestId: message.requestId,
+        ok: true,
+        capturedAt: "2026-09-09T00:00:00.000Z",
+        screenshots: [
+          {
+            surface: "host",
+            width: 1440,
+            height: 1024,
+            relativePath: `${message.relativeDir}/host-desktop.png`,
+          },
+          {
+            surface: "controller",
+            width: 390,
+            height: 844,
+            relativePath: `${message.relativeDir}/controller-phone.png`,
+          },
+        ],
+        error: null,
+      });
+    });
+    return true;
+  }
 
   kill(): boolean {
     this.killed = true;
@@ -215,8 +251,11 @@ describe("isolated runtime controller handoff", () => {
   });
 
   it("keeps an isolated runtime host alive while its controller is connected", async () => {
-    const { connectController, disconnectController } =
-      await import("../src/controller.js");
+    const {
+      captureControllerSessionVisuals,
+      connectController,
+      disconnectController,
+    } = await import("../src/controller.js");
 
     const session = await connectController({
       cwd: "/tmp/solo",
@@ -227,6 +266,23 @@ describe("isolated runtime controller handoff", () => {
     expect(session.roomId).toBe("ROOM2");
     expect(session.controllerJoinUrl).toContain("room=ROOM2");
     expect(spawnedOwners).toHaveLength(1);
+
+    const capture = await captureControllerSessionVisuals({
+      controllerSessionId: session.controllerSessionId,
+      relativeDir: ".airjam/artifacts/session-visuals/capture-1",
+    });
+    expect(capture.screenshots).toEqual([
+      expect.objectContaining({
+        surface: "host",
+        relativePath:
+          ".airjam/artifacts/session-visuals/capture-1/host-desktop.png",
+      }),
+      expect.objectContaining({
+        surface: "controller",
+        relativePath:
+          ".airjam/artifacts/session-visuals/capture-1/controller-phone.png",
+      }),
+    ]);
 
     await disconnectController({
       controllerSessionId: session.controllerSessionId,

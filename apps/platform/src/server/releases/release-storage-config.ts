@@ -5,6 +5,7 @@ type ReleaseStorageConfig = {
   endpoint: string;
   accessKeyId: string;
   secretAccessKey: string;
+  sessionToken?: string;
   uploadUrlTtlSeconds: number;
 };
 

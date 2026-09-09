@@ -151,6 +151,7 @@ test("buildSecureGameEnv forwards the secure runtime contract", () => {
         keyFile: "/tmp/local-dev-key.pem",
       },
       webOnly: true,
+      backendOrigin: "http://127.0.0.1:4000",
     }),
     {
       AIR_JAM_SECURE_MODE: SECURE_MODE_LOCAL,

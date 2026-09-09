@@ -28,6 +28,7 @@ import {
   readLocalHostedGameDefaults,
   updatePlatformGame,
 } from "@air-jam/devtools-core/platform-games";
+import { runCompleteEvaluation } from "@air-jam/devtools-core/quality";
 import {
   bundleLocalRelease,
   exportPlatformReleaseGeneration,
@@ -58,6 +59,7 @@ import {
 } from "./ai-pack";
 import { runMcpConfig, runMcpDoctor, runMcpInit } from "./mcp";
 import {
+  captureSessionVisuals,
   closeSession,
   invokeSessionAction,
   openSession,
@@ -1187,6 +1189,21 @@ const buildProgram = () => {
     aiPackCommand.outputHelp();
   });
 
+  program
+    .command("evaluate")
+    .description(
+      "Run the complete game evaluation: typecheck, lint, tests, and production build",
+    )
+    .option("--dir <path>", "Project directory to evaluate")
+    .action(async (options: unknown) => {
+      const input = resolveActionOptions<{ dir?: string }>(options);
+      const result = await runCompleteEvaluation({ cwd: input.dir });
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      if (result.status !== "passed") {
+        process.exitCode = 1;
+      }
+    });
+
   const gameCommand = program
     .command("game")
     .description("Manage hosted Air Jam game records on the platform");
@@ -1845,6 +1862,27 @@ const buildProgram = () => {
     });
 
   sessionCommand
+    .command("capture")
+    .description(
+      "Capture canonical host and controller screenshots from a persistent session",
+    )
+    .argument("<session-id>", "Game session ID")
+    .option("--dir <path>", "Project directory")
+    .option("--timeout-ms <ms>", "Capture timeout in milliseconds", Number)
+    .action(async (sessionId: string, options: unknown) => {
+      const input = resolveActionOptions<{
+        dir?: string;
+        timeoutMs?: number;
+      }>(options);
+      const result = await captureSessionVisuals({
+        dir: input.dir,
+        gameSessionId: sessionId,
+        timeoutMs: input.timeoutMs,
+      });
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    });
+
+  sessionCommand
     .command("close")
     .description("Close a persistent semantic game session")
     .argument("<session-id>", "Game session ID")
@@ -1943,6 +1981,18 @@ const buildProgram = () => {
       "Reuse an already-running Vite server on the game port",
       false,
     )
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Network isolation:",
+        "  VITE_PORT=<port>                 Game app port (default: 5173)",
+        "  AIR_JAM_SERVER_PORT=<port>       Local server port (default: 4000)",
+        "  VITE_AIR_JAM_PUBLIC_HOST=<url>   Explicit host/controller origin",
+        "",
+        "Set all three when parallel agents or local projects need isolated dev stacks.",
+      ].join("\n"),
+    )
     .action(async () => {
       await runGameDevCli({
         argv: normalizeRuntimeCliArgv(process.argv.slice(3)),
@@ -2028,6 +2078,10 @@ const buildProgram = () => {
       "--secure",
       "Resolve standalone local topology using trusted local HTTPS",
       false,
+    )
+    .addHelpText(
+      "after",
+      "\nTopology honors VITE_PORT, AIR_JAM_SERVER_PORT, VITE_AIR_JAM_SERVER_URL, and VITE_AIR_JAM_PUBLIC_HOST.\n",
     )
     .action(async () => {
       await runProjectTopologyCli({

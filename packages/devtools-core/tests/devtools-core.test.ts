@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Server as SocketIoServer } from "socket.io";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  AIR_JAM_COMPLETE_EVALUATION_GATES,
   closeGameSession,
   connectController,
   detectProjectContext,
@@ -36,6 +37,7 @@ import {
   readRuntimeSnapshot,
   readVisualCaptureSummary,
   resetLocalDev,
+  runCompleteEvaluation,
   runQualityGate,
   sendControllerInput,
   sendGameSessionInput,
@@ -808,6 +810,32 @@ describe("runQualityGate", () => {
     await expect(
       runQualityGate({ cwd: root, gate: "release-check" }),
     ).rejects.toThrow(/only available in the Air Jam monorepo/);
+  });
+});
+
+describe("runCompleteEvaluation", () => {
+  it("runs the canonical four game gates and reports one stable result", async () => {
+    const root = await createTempRoot();
+    const passingScript = `${JSON.stringify(process.execPath)} -e "process.exit(0)"`;
+    await writeJson(path.join(root, "package.json"), {
+      name: "evaluation-fixture",
+      dependencies: { "@air-jam/sdk": "^1.0.0" },
+      scripts: {
+        typecheck: passingScript,
+        lint: passingScript,
+        test: passingScript,
+        build: passingScript,
+      },
+    });
+
+    const evaluation = await runCompleteEvaluation({ cwd: root });
+
+    expect(evaluation.contract).toBe("air-jam-complete-evaluation/v1");
+    expect(evaluation.status).toBe("passed");
+    expect(evaluation.gates.map(({ gate }) => gate)).toEqual(
+      AIR_JAM_COMPLETE_EVALUATION_GATES,
+    );
+    expect(evaluation.gates.every(({ result }) => result.ok)).toBe(true);
   });
 });
 

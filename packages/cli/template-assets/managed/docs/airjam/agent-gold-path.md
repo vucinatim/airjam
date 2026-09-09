@@ -15,7 +15,7 @@ This is the shortest correct workflow for building and testing an Air Jam game.
 2. Need structured game state: use `airjam.open_game_session` then `airjam.read_game_session`.
 3. Need to trigger a semantic game verb: use `airjam.invoke_game_session_action` with a `player:*` action id.
 4. Need deterministic host staging or reset actions: use `host:*` session actions when the game exposes them.
-5. Need visual proof: use the embedded browser or browser tooling screenshots.
+5. Need visual proof: use the embedded browser when available, otherwise call `airjam.capture_game_session_visuals` on the room-owning session.
 
 ## Launch Rule
 
@@ -64,3 +64,4 @@ This is the shortest correct workflow for building and testing an Air Jam game.
 5. Add multiple preview controllers from the host preview workspace when you need multiple local players; do not open unrelated OS browser tabs unless the user asks for tabs.
 6. Use visible preview controllers for UI smoke proof with real browser click/drag/release gestures.
 7. Do not synthesize pointer events into controller iframes from parent-page eval; use semantic game actions when reliable gameplay proof matters.
+8. If the agent environment cannot launch a browser, capture the existing room's canonical host and controller views through `airjam.capture_game_session_visuals`; do not start an unrelated browser or room.

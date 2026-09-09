@@ -1,6 +1,19 @@
 import { runCommandResult } from "./commands.js";
 import { detectProjectContext } from "./context.js";
-import type { CommandResult, RunQualityGateOptions } from "./types.js";
+import type {
+  AirJamCompleteEvaluationResult,
+  AirJamQualityGate,
+  CommandResult,
+  RunCompleteEvaluationOptions,
+  RunQualityGateOptions,
+} from "./types.js";
+
+export const AIR_JAM_COMPLETE_EVALUATION_GATES = [
+  "typecheck",
+  "lint",
+  "test",
+  "build",
+] as const satisfies readonly AirJamQualityGate[];
 
 const GATE_TO_SCRIPT: Record<RunQualityGateOptions["gate"], string> = {
   typecheck: "typecheck",
@@ -36,4 +49,26 @@ export const runQualityGate = async (
     args,
     cwd: context.rootDir,
   });
+};
+
+export const runCompleteEvaluation = async ({
+  cwd,
+}: RunCompleteEvaluationOptions = {}): Promise<AirJamCompleteEvaluationResult> => {
+  const startedAt = new Date().toISOString();
+  const gates: AirJamCompleteEvaluationResult["gates"] = [];
+
+  for (const gate of AIR_JAM_COMPLETE_EVALUATION_GATES) {
+    gates.push({
+      gate,
+      result: await runQualityGate({ cwd, gate }),
+    });
+  }
+
+  return {
+    contract: "air-jam-complete-evaluation/v1",
+    status: gates.every(({ result }) => result.ok) ? "passed" : "failed",
+    startedAt,
+    endedAt: new Date().toISOString(),
+    gates,
+  };
 };

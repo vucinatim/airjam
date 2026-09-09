@@ -431,24 +431,28 @@ export const buildSecureGameEnv = ({
   secureState,
   webOnly,
   env = process.env,
-} = {}) => ({
-  VITE_AIR_JAM_RUNTIME_TOPOLOGY: serializeResolvedTopology(
-    buildStandaloneGameTopology({
-      surfaceRole: "host",
-      publicHost: secureState.publicHost,
-      secureTransport: true,
-    }),
-  ),
-  AIR_JAM_SECURE_MODE: secureState.mode,
-  AIR_JAM_SECURE_PUBLIC_HOST: secureState.publicHost,
-  AIR_JAM_DEV_CERT_FILE: secureState.certFile,
-  AIR_JAM_DEV_KEY_FILE: secureState.keyFile,
-  AIR_JAM_DEV_PROXY_BACKEND_URL: "http://127.0.0.1:4000",
-  VITE_AIR_JAM_PUBLIC_HOST: secureState.publicHost,
-  ...(webOnly && env.VITE_AIR_JAM_SERVER_URL
-    ? { VITE_AIR_JAM_SERVER_URL: env.VITE_AIR_JAM_SERVER_URL }
-    : {}),
-});
+  backendOrigin,
+} = {}) => {
+  return {
+    VITE_AIR_JAM_RUNTIME_TOPOLOGY: serializeResolvedTopology(
+      buildStandaloneGameTopology({
+        surfaceRole: "host",
+        publicHost: secureState.publicHost,
+        backendOrigin,
+        secureTransport: true,
+      }),
+    ),
+    AIR_JAM_SECURE_MODE: secureState.mode,
+    AIR_JAM_SECURE_PUBLIC_HOST: secureState.publicHost,
+    AIR_JAM_DEV_CERT_FILE: secureState.certFile,
+    AIR_JAM_DEV_KEY_FILE: secureState.keyFile,
+    AIR_JAM_DEV_PROXY_BACKEND_URL: backendOrigin,
+    VITE_AIR_JAM_PUBLIC_HOST: secureState.publicHost,
+    ...(webOnly && env.VITE_AIR_JAM_SERVER_URL
+      ? { VITE_AIR_JAM_SERVER_URL: env.VITE_AIR_JAM_SERVER_URL }
+      : {}),
+  };
+};
 
 export const appendNextHttpsArgs = ({ env = process.env, args = [] } = {}) => {
   const certFile = env.AIR_JAM_DEV_CERT_FILE;

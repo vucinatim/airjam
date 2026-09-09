@@ -39,6 +39,8 @@
     "runtime/vite-config.d.mts",
     "runtime/vite-https.mjs",
     "runtime/vite-https.d.mts",
+    "runtime/local-network.mjs",
+    "runtime/local-network.d.mts",
     "template-assets"
   ],
   "scripts": {

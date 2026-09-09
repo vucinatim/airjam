@@ -52,6 +52,16 @@ test("airjam exposes dev help", () => {
   assert.match(output, /--secure/);
   assert.match(output, /--preview-managed/);
   assert.match(output, /--server-only/);
+  assert.match(output, /AIR_JAM_SERVER_PORT/);
+  assert.match(output, /parallel agents/);
+});
+
+test("airjam exposes the complete evaluation contract", () => {
+  const output = runCliHelp("evaluate");
+
+  assert.match(output, /complete game evaluation/i);
+  assert.match(output, /typecheck, lint, tests, and production build/i);
+  assert.match(output, /--dir <path>/);
 });
 
 test("airjam exposes secure:init help", () => {
@@ -68,6 +78,7 @@ test("airjam exposes topology help", () => {
   assert.match(output, /Usage: airjam topology/);
   assert.match(output, /--mode <mode>/);
   assert.match(output, /standalone-dev/);
+  assert.match(output, /VITE_PORT/);
 });
 
 test("airjam exposes status help", () => {
@@ -386,6 +397,7 @@ test("airjam exposes persistent semantic session lifecycle help", () => {
   assert.match(output, /open/);
   assert.match(output, /read/);
   assert.match(output, /invoke/);
+  assert.match(output, /capture/);
   assert.match(output, /close/);
   assert.match(output, /broker/);
 });

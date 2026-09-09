@@ -439,6 +439,29 @@ export const createRailwayApiClient = ({
     return data.volumeInstanceBackupList ?? [];
   };
 
+  const createVolume = async ({
+    projectId,
+    environmentId,
+    serviceId,
+    mountPath,
+  }) => {
+    const data = await request({
+      query: `
+        mutation RailwayVolumeCreate($input: VolumeCreateInput!) {
+          volumeCreate(input: $input) {
+            id
+            name
+            projectId
+          }
+        }
+      `,
+      variables: {
+        input: { projectId, environmentId, serviceId, mountPath },
+      },
+    });
+    return data.volumeCreate;
+  };
+
   const listVolumeBackupSchedules = async ({ volumeInstanceId }) => {
     const data = await request({
       query: `
@@ -744,18 +767,24 @@ export const createRailwayApiClient = ({
     retryDelayMs = 2000,
   }) => {
     let lastDeployment = null;
+    let lastError = null;
 
     for (let attempt = 1; attempt <= retries; attempt += 1) {
-      lastDeployment = await getDeployment(deploymentId);
-      if (
-        TERMINAL_SUCCESS_DEPLOYMENT_STATUSES.has(lastDeployment.status) ||
-        TERMINAL_FAILURE_DEPLOYMENT_STATUSES.has(lastDeployment.status)
-      ) {
-        return {
-          deployment: lastDeployment,
-          attempt,
-          ok: TERMINAL_SUCCESS_DEPLOYMENT_STATUSES.has(lastDeployment.status),
-        };
+      try {
+        lastDeployment = await getDeployment(deploymentId);
+        if (
+          TERMINAL_SUCCESS_DEPLOYMENT_STATUSES.has(lastDeployment.status) ||
+          TERMINAL_FAILURE_DEPLOYMENT_STATUSES.has(lastDeployment.status)
+        ) {
+          return {
+            deployment: lastDeployment,
+            attempt,
+            ok: TERMINAL_SUCCESS_DEPLOYMENT_STATUSES.has(lastDeployment.status),
+          };
+        }
+        lastError = null;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
       }
 
       if (attempt < retries) {
@@ -768,6 +797,41 @@ export const createRailwayApiClient = ({
       attempt: retries,
       ok: false,
       timeout: true,
+      ...(lastError ? { error: lastError } : {}),
+    };
+  };
+
+  const waitForVolumeInstance = async ({
+    environmentId,
+    serviceId,
+    mountPath,
+    retries = 30,
+    retryDelayMs = 1000,
+  }) => {
+    let lastError = null;
+    for (let attempt = 1; attempt <= retries; attempt += 1) {
+      try {
+        const environment = await getEnvironment(environmentId);
+        const volume = environment.volumeInstances.find(
+          (candidate) =>
+            candidate.serviceId === serviceId &&
+            candidate.mountPath === mountPath,
+        );
+        if (volume) return { volume, attempt, matched: true };
+        lastError = null;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+    }
+    return {
+      volume: null,
+      attempt: retries,
+      matched: false,
+      timeout: true,
+      ...(lastError ? { error: lastError } : {}),
     };
   };
 
@@ -827,6 +891,7 @@ export const createRailwayApiClient = ({
     getProject,
     listEnvironments,
     getEnvironment,
+    createVolume,
     listVolumeBackups,
     listVolumeBackupSchedules,
     updateVolumeBackupSchedules,
@@ -840,6 +905,7 @@ export const createRailwayApiClient = ({
     rollbackDeployment,
     waitForServiceDeployment,
     waitForDeployment,
+    waitForVolumeInstance,
     resolveServicePublicDomain,
     waitForServicePublicDomain,
   };

@@ -29,6 +29,11 @@ import {
   resolveDevtoolsHelperArgs,
   resolveDevtoolsHelperScript,
 } from "./helper-scripts.js";
+import {
+  AIR_JAM_RUNTIME_OWNER_CAPTURE_REQUEST,
+  isRuntimeOwnerCaptureResult,
+  type AirJamRuntimeOwnerCaptureResult,
+} from "./runtime-owner-protocol.js";
 import type {
   AirJamProjectMode,
   AirJamRuntimeSnapshotInspection,
@@ -71,6 +76,7 @@ type InternalControllerSession = {
 };
 
 const DEFAULT_TIMEOUT_MS = 5_000;
+const DEFAULT_VISUAL_CAPTURE_TIMEOUT_MS = 15_000;
 const WAIT_INTERVAL_MS = 25;
 const virtualControllerSessions = new Map<string, InternalControllerSession>();
 
@@ -473,7 +479,7 @@ const startIsolatedRuntimeOwner = async ({
 
   const helperProcess = spawn(process.execPath, args, {
     cwd,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
 
   return await new Promise((resolve, reject) => {
@@ -564,6 +570,85 @@ const startIsolatedRuntimeOwner = async ({
     helperProcess.once("error", onError);
     helperProcess.once("exit", onExit);
   });
+};
+
+export const captureControllerSessionVisuals = async ({
+  controllerSessionId,
+  relativeDir,
+  timeoutMs = DEFAULT_VISUAL_CAPTURE_TIMEOUT_MS,
+}: {
+  controllerSessionId: string;
+  relativeDir: string;
+  timeoutMs?: number;
+}) => {
+  const session = getRequiredSession(controllerSessionId);
+  const owner = session.isolatedRuntimeOwner;
+  if (!owner?.connected) {
+    throw new Error(
+      `Air Jam controller session "${controllerSessionId}" does not own a capturable host runtime. Capture from the first game session opened for the room.`,
+    );
+  }
+
+  const requestId = randomUUID();
+  const result = await new Promise<AirJamRuntimeOwnerCaptureResult>(
+    (resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error("Timed out waiting for runtime visual capture."));
+      }, timeoutMs);
+      const cleanup = () => {
+        clearTimeout(timeout);
+        owner.off("message", onMessage);
+        owner.off("error", onError);
+        owner.off("exit", onExit);
+      };
+      const onMessage = (message: unknown) => {
+        if (
+          !isRuntimeOwnerCaptureResult(message) ||
+          message.requestId !== requestId
+        ) {
+          return;
+        }
+        cleanup();
+        if (!message.ok) {
+          reject(new Error(message.error ?? "Runtime visual capture failed."));
+          return;
+        }
+        resolve(message);
+      };
+      const onError = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+      const onExit = (code: number | null) => {
+        cleanup();
+        reject(
+          new Error(
+            `Runtime owner exited before visual capture completed (code ${code ?? "unknown"}).`,
+          ),
+        );
+      };
+
+      owner.on("message", onMessage);
+      owner.once("error", onError);
+      owner.once("exit", onExit);
+      owner.send(
+        {
+          type: AIR_JAM_RUNTIME_OWNER_CAPTURE_REQUEST,
+          requestId,
+          relativeDir,
+        },
+        (error) => {
+          if (error) onError(error);
+        },
+      );
+    },
+  );
+
+  return {
+    capturedAt: result.capturedAt,
+    screenshots: result.screenshots,
+  };
 };
 
 const buildRuntimeSnapshot = ({

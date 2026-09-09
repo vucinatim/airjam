@@ -1,6 +1,7 @@
 import { EnvValidationError } from "@air-jam/env";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { resolveLocalBackendOrigin } from "./local-network.mjs";
 import { loadCreateAirJamRuntimeEnv } from "./runtime-env.mjs";
 
 test("loadCreateAirJamRuntimeEnv parses defaults", () => {
@@ -10,6 +11,7 @@ test("loadCreateAirJamRuntimeEnv parses defaults", () => {
   });
 
   assert.equal(runtimeEnv.VITE_PORT, 5173);
+  assert.equal(runtimeEnv.AIR_JAM_SERVER_PORT, 4000);
   assert.equal(runtimeEnv.AIR_JAM_SECURE_MODE, undefined);
 });
 
@@ -44,5 +46,38 @@ test("loadCreateAirJamRuntimeEnv rejects invalid VITE_PORT", () => {
         boundary: "create-airjam.runtime-test",
       }),
     EnvValidationError,
+  );
+});
+
+test("loadCreateAirJamRuntimeEnv parses and validates AIR_JAM_SERVER_PORT", () => {
+  assert.equal(
+    loadCreateAirJamRuntimeEnv({
+      env: { AIR_JAM_SERVER_PORT: "4400" },
+      boundary: "create-airjam.runtime-test",
+    }).AIR_JAM_SERVER_PORT,
+    4400,
+  );
+  assert.throws(
+    () =>
+      loadCreateAirJamRuntimeEnv({
+        env: { AIR_JAM_SERVER_PORT: "not-a-port" },
+        boundary: "create-airjam.runtime-test",
+      }),
+    EnvValidationError,
+  );
+});
+
+test("resolveLocalBackendOrigin owns default, port, and explicit URL precedence", () => {
+  assert.equal(resolveLocalBackendOrigin(), "http://127.0.0.1:4000");
+  assert.equal(
+    resolveLocalBackendOrigin({ AIR_JAM_SERVER_PORT: 4400 }),
+    "http://127.0.0.1:4400",
+  );
+  assert.equal(
+    resolveLocalBackendOrigin({
+      AIR_JAM_SERVER_PORT: 4400,
+      VITE_AIR_JAM_SERVER_URL: "https://backend.example.test",
+    }),
+    "https://backend.example.test",
   );
 });

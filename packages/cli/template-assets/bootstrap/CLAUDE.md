@@ -53,7 +53,8 @@ Use the game-owned agent contract for reliable gameplay assertions:
 1. `airjam.open_game_session`
 2. `airjam.read_game_session`
 3. `airjam.invoke_game_session_action`
-4. `airjam.close_game_session`
+4. `airjam.capture_game_session_visuals`
+5. `airjam.close_game_session`
 
 Use semantic actions for gameplay mechanics, physics outcomes, scoring, reset, and state assertions. Preview controllers are for visible UI smoke proof, not the primary automation lane.
 

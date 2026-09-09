@@ -29,7 +29,7 @@ const isLoopbackDatabaseUrl = (databaseUrl) => {
   return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(hostname);
 };
 
-const resolveRailwayDatabaseUrl = (variables) => {
+export const resolveRailwayDatabaseUrl = (variables) => {
   if (variables.DATABASE_PUBLIC_URL) return variables.DATABASE_PUBLIC_URL;
 
   const proxyHost = variables.RAILWAY_TCP_PROXY_DOMAIN;

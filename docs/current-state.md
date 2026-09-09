@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-09-08
+Last updated: 2026-09-09
 Status: current snapshot
 
 This is the canonical quick-read status surface for the Air Jam repo.
@@ -189,20 +189,22 @@ These are now baseline truths, not open architecture debates:
        scaffold archives; Gate 6 now enforces that value beneath a 100 MiB
        package ceiling and proves cold scaffold installation below ten minutes
        on every supported cell
-    10. the retained Codex primary run independently built the full Signal Relay
-        game, passed all four quality gates, and reached semantic-session control
-        before both supported Chromium paths hit the same macOS Mach-port denial
+    10. early retained Codex runs independently built the full Signal Relay
+        game and turned browser, session, evaluation, evidence, staging, and
+        upload failures into classified product findings
     11. independent review reopened `G2-03`: the retained local run remains
         useful diagnostic evidence, but its ignored artifact path was not
         independently retrievable and the controller could trust agent-authored
         verification claims
-    12. the corrected controller now owns isolation probes, quality gates,
-        cleanup, and release-verification authority; `G2-03` requires a new
-        durable replay before completion, `G2-04` owns independent Claude
-        Desktop proof, and `G2-05` owns browser/staging closure
+    12. the corrected controller owns isolation probes, quality gates, cleanup,
+        and release-verification authority; the new durable `a22` replay passed
+        the complete create, control, inspect, fault-repair, visual, evaluation,
+        hidden-release, verification, and cleanup lifecycle
     13. the integration review further made staging isolation environment-wide
         and fail-closed, made evidence retention rollback-safe and extension
         independent, and bounded external-agent plus cleanup process lifetimes
+    14. `G2-04` still owns independent Claude Desktop proof, and `G2-05` owns
+        final replay plus residual-friction closure across both supported clients
 15. Gate 4 now has one agent-operable operational authority contract:
     1. product telemetry, authoritative lifecycle/runtime facts, and durable
        incidents remain separate evidence planes
@@ -404,21 +406,18 @@ archive-extraction budgets. The proof used a fallback-free candidate registry
 and empty cache, so neither an old npm package nor the monorepo could satisfy
 it; npm and production were not changed.
 
-Gate `G2-03` is now explicitly blocked on isolated staging credentials and
-controller-readable provider identity. Its completion requires a new
-controller-owned Signal Relay replay whose durable artifacts, isolation checks,
-quality gates, cleanup, and release verification do not depend on agent-authored
-success claims. The old PR-52 hostname is no longer admissible staging proof because it
-still served platform health after Railway reported no corresponding ephemeral
-environment. The runner now requires provider-owned Railway project and
-environment identity and proves separation from production before agent
-startup. Pull request `#61` produced an ephemeral environment with a distinct
-Postgres instance, but Railway cloned the production R2 bucket, storage
-credentials, release-pipeline tokens, and other sensitive values, while the
-provider API can now attest those service-by-service facts without exposing the
-values. It is therefore not admissible isolated staging. Correcting those
-boundaries remains explicit work rather than an automatic side effect of the
-proof harness.
+Gate `G2-03` now has a terminal passing Codex primary run. The external agent
+started in an empty workspace without repository access, maintainer/provider
+credentials, or undeclared network access; discovered the five public
+candidate packages; implemented Signal Relay; passed the complete quality
+evaluation; operated two controllers through semantic sessions; diagnosed and
+repaired the declared win-score fault; captured and inspected host/controller
+visuals; submitted a ready hidden release to provider-attested isolated
+staging; and cleaned every run-owned process and identity. The complete
+sanitized transcript and decisive machine evidence are retained in
+[the primary-agent audit](./audits/v1-golden-path/primary-agent-run-audit.md).
+`G2-04` remains the independent Claude Desktop proof, and `G2-05` remains the
+final settled-client replay and residual-friction closeout.
 
 Gate `G2-02` is closed at `511ee85` with the
 [public bootstrap audit](./audits/v1-golden-path/public-bootstrap-audit.md).

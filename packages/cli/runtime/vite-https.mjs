@@ -1,6 +1,7 @@
 import fs from "node:fs";
+import { resolveLocalBackendOrigin } from "./local-network.mjs";
 
-export const DEFAULT_AIR_JAM_DEV_BACKEND_URL = "http://127.0.0.1:4000";
+export const DEFAULT_AIR_JAM_DEV_BACKEND_URL = resolveLocalBackendOrigin();
 
 export const getAirJamHttpsServerOptions = (env = process.env) => {
   const certFile = env.AIR_JAM_DEV_CERT_FILE;
@@ -20,7 +21,8 @@ export const getAirJamHttpsServerOptions = (env = process.env) => {
 };
 
 export const getAirJamDevBackendUrl = (env = process.env) =>
-  env.AIR_JAM_DEV_PROXY_BACKEND_URL?.trim() || DEFAULT_AIR_JAM_DEV_BACKEND_URL;
+  env.AIR_JAM_DEV_PROXY_BACKEND_URL?.trim() ||
+  resolveLocalBackendOrigin(env);
 
 export const getAirJamDevProxyOptions = (env = process.env) => {
   const target = getAirJamDevBackendUrl(env);

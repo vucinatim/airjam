@@ -90,6 +90,16 @@ This project is "vibecode friendly"—it includes documentation and AI instructi
 These paths are the current starter template shape.
 They are recommended defaults for new projects, not framework-mandated filenames.
 
+### Run the Complete Evaluation
+
+Before sharing a game—and again after any repair—run the canonical complete evaluation:
+
+```bash
+pnpm exec airjam evaluate --dir .
+```
+
+It returns one machine-readable `air-jam-complete-evaluation/v1` document containing the results of typecheck, lint, tests, and the production build. Agents can call the same service through the `airjam.evaluate` MCP action. Individual gates remain available when narrowing a failure.
+
 ### Refresh Managed Framework Guidance
 
 Scaffolded projects include an AI pack that owns canonical framework references under `docs/airjam/`. Top-level agent instructions and project-local skills are bootstrap files: after creation, they belong to the project and Air Jam never overwrites them.
@@ -112,6 +122,19 @@ pnpm exec airjam ai-pack repair --dir .
 1. Verify `pnpm run dev` is running.
 2. Confirm server health: [http://localhost:4000/health](http://localhost:4000/health).
 3. Confirm your game is using `http://localhost:4000` for `VITE_AIR_JAM_SERVER_URL` (or no override at all for local defaults).
+
+### Local port already in use
+
+Each parallel agent or project can run an isolated stack without stopping another one:
+
+```bash
+AIR_JAM_SERVER_PORT=4400 \
+VITE_PORT=5573 \
+VITE_AIR_JAM_PUBLIC_HOST=http://127.0.0.1:5573 \
+pnpm run dev
+```
+
+`pnpm exec airjam topology --mode=standalone-dev` honors the same environment, so the CLI, semantic sessions, QR URL, Vite proxy, and local server stay on one coherent topology.
 
 ### App ID errors in deployed environments
 

@@ -15,14 +15,14 @@
     {
       "path": "docs/airjam/agent-gold-path.md",
       "kind": "docs-local",
-      "size": 4746,
-      "sha256": "fa581eabc10667c3d108419ceb8bc7c4c8bc62724803f85049833c3086316c92"
+      "size": 5018,
+      "sha256": "8419951ad3a1e92fed5b7c3714b0908c6e6bed3d661041d5692ee38337888dcd"
     },
     {
       "path": "docs/airjam/agent-mcp.md",
       "kind": "docs-local",
-      "size": 6900,
-      "sha256": "8ec4826b12bb92908038980a4dc34d0c082f99eba054f52a26d16eb6a1e35202"
+      "size": 7245,
+      "sha256": "c878e2eebfbbc927dfce5548c0d7a4163feffd3965a82c8c5dc38a9ec385c42b"
     },
     {
       "path": "docs/airjam/canvas-2d-gameplay.md",
@@ -111,8 +111,8 @@
     {
       "path": "docs/airjam/generated/quick-start.md",
       "kind": "docs-generated",
-      "size": 8657,
-      "sha256": "e6a718299346c8f64b862b8d2a62d270ca683e66c41bdfd5bd6278e0174b37df"
+      "size": 9533,
+      "sha256": "cacabd957277f62361fea7def22ce754e3f26a78cfce381af0761270f11db18d"
     },
     {
       "path": "docs/airjam/generated/sdk-hooks.md",
@@ -169,5 +169,5 @@
       "sha256": "0eaa064c38b4568c200fbf5cadb96f16c7c738a29469c4c955fb1ac5f8077edf"
     }
   ],
-  "contentDigest": "1fc3f33ef591de4243be3b1356306a27b6650d4ec3b063f0d02f15edff120f93"
+  "contentDigest": "45541ba07f9ffad70e0b1c2d3a699f75f4776f42b4c4f03980ce0ce1cb3c67f8"
 }

@@ -26,7 +26,7 @@ test("evidence sanitization covers every UTF-8 file regardless of extension", ()
     for (const name of ["report.yaml", "extensionless"]) {
       fs.writeFileSync(
         path.join(runRoot, name),
-        `root: ${runRoot}\nregistry: ${registryUrl}\n`,
+        `root: ${runRoot}\nregistry: ${registryUrl}\ncontroller: https://controller.example/controller?room=TEST&aj_controller_cap=private-capability\n`,
       );
     }
 
@@ -35,11 +35,28 @@ test("evidence sanitization covers every UTF-8 file regardless of extension", ()
     for (const name of ["report.yaml", "extensionless"]) {
       const value = fs.readFileSync(path.join(runRoot, name), "utf8");
       assert.doesNotMatch(value, /run-secret|127\.0\.0\.1/u);
+      assert.doesNotMatch(value, /private-capability/u);
       assert.match(value, /<run>|<candidate-registry>/u);
+      assert.match(value, /aj_controller_cap=<redacted>/u);
     }
+
+    const nestedJson = JSON.stringify({
+      output: JSON.stringify({
+        controllerJoinUrl:
+          "https://controller.example/controller?room=TEST&aj_controller_cap=private-capability",
+      }),
+    });
+    const nestedPath = path.join(runRoot, "events.ndjson");
+    fs.writeFileSync(nestedPath, nestedJson);
+
+    sanitizeEvidenceTree({ evidenceDir: runRoot, runRoot, registryUrl });
+
+    const sanitizedNestedJson = fs.readFileSync(nestedPath, "utf8");
+    assert.doesNotMatch(sanitizedNestedJson, /private-capability/u);
+    assert.doesNotThrow(() => JSON.parse(sanitizedNestedJson));
   }));
 
-test("evidence sanitization rejects binary artifacts instead of retaining them", () =>
+test("evidence sanitization rejects undeclared binary artifacts", () =>
   withTempDirectory((directory) => {
     fs.writeFileSync(path.join(directory, "image.bin"), Buffer.from([1, 0, 2]));
     assert.throws(
@@ -49,7 +66,7 @@ test("evidence sanitization rejects binary artifacts instead of retaining them",
           runRoot: directory,
           registryUrl: "http://127.0.0.1:4873",
         }),
-      /evidence must be text/u,
+      /undeclared binary type/u,
     );
   }));
 

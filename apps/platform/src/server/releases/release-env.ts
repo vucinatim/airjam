@@ -65,6 +65,7 @@ const releaseStorageEnvSchema = z
     AIRJAM_RELEASES_R2_SECRET_ACCESS_KEY: requiredEnvValue(
       "AIRJAM_RELEASES_R2_SECRET_ACCESS_KEY",
     ),
+    AIRJAM_RELEASES_R2_SESSION_TOKEN: optionalEnvValue,
     AIRJAM_RELEASES_UPLOAD_URL_TTL_SECONDS: positiveIntegerFromEnv(
       "AIRJAM_RELEASES_UPLOAD_URL_TTL_SECONDS",
       DEFAULT_UPLOAD_URL_TTL_SECONDS,
@@ -90,6 +91,7 @@ const releaseStorageEnvSchema = z
       `https://${value.AIRJAM_RELEASES_R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
     accessKeyId: value.AIRJAM_RELEASES_R2_ACCESS_KEY_ID,
     secretAccessKey: value.AIRJAM_RELEASES_R2_SECRET_ACCESS_KEY,
+    sessionToken: value.AIRJAM_RELEASES_R2_SESSION_TOKEN,
     uploadUrlTtlSeconds: value.AIRJAM_RELEASES_UPLOAD_URL_TTL_SECONDS,
   }));
 

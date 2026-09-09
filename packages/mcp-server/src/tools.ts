@@ -8,6 +8,7 @@ import {
   stopDev,
 } from "@air-jam/devtools-core/dev";
 import {
+  captureGameSessionVisuals,
   closeGameSession,
   invokeGameSessionAction,
   openGameSession,
@@ -17,7 +18,10 @@ import {
 import { inspectGame, listGames } from "@air-jam/devtools-core/games";
 import { readDevLogs } from "@air-jam/devtools-core/logs";
 import { getPlatformMachineAuthStatus } from "@air-jam/devtools-core/platform-auth";
-import { runQualityGate } from "@air-jam/devtools-core/quality";
+import {
+  runCompleteEvaluation,
+  runQualityGate,
+} from "@air-jam/devtools-core/quality";
 import {
   bundleLocalRelease,
   exportPlatformReleaseGeneration,
@@ -235,6 +239,10 @@ export const buildToolDefinitions = ({
     gameId: z.string().optional(),
   });
   const openGameSessionInputSchema = buildConnectControllerSchema(projectMode);
+  const captureGameSessionInputSchema = z.object({
+    gameSessionId: z.string().uuid(),
+    timeoutMs: z.number().int().positive().optional(),
+  });
   const gameSessionInputSchema = z.object({
     gameSessionId: z.string().min(1),
   });
@@ -297,6 +305,13 @@ export const buildToolDefinitions = ({
       inputSchema: runQualityGateInputSchema,
       run: async (input: z.infer<typeof runQualityGateInputSchema>) =>
         withJsonText(await runQualityGate(input)),
+    },
+    "airjam.evaluate": {
+      description:
+        "Run the complete Air Jam game evaluation: typecheck, lint, tests, and a production build. Returns every gate result in one stable document.",
+      inputSchema: z.object({ cwd: z.string().optional() }),
+      run: async ({ cwd }: { cwd?: string }) =>
+        withJsonText(await runCompleteEvaluation({ cwd })),
     },
     "airjam.auth_status": {
       description:
@@ -567,6 +582,13 @@ export const buildToolDefinitions = ({
       inputSchema: invokeGameSessionActionInputSchema,
       run: async (input: z.infer<typeof invokeGameSessionActionInputSchema>) =>
         withJsonText(await invokeGameSessionAction(input)),
+    },
+    "airjam.capture_game_session_visuals": {
+      description:
+        "Capture canonical host and controller screenshots from the browser runtime owned by an open game session.",
+      inputSchema: captureGameSessionInputSchema,
+      run: async (input: z.infer<typeof captureGameSessionInputSchema>) =>
+        withJsonText(await captureGameSessionVisuals(input)),
     },
     "airjam.close_game_session": {
       description:

@@ -7,6 +7,7 @@
     "airjam.inspect_game_agent_contract",
     "airjam.read_logs",
     "airjam.run_quality_gate",
+    "airjam.evaluate",
     "airjam.release_list",
     "airjam.release_inspect",
     "airjam.release_upload",
@@ -22,6 +23,7 @@
     "airjam.send_game_session_input",
     "airjam.read_game_session",
     "airjam.invoke_game_session_action",
+    "airjam.capture_game_session_visuals",
     "airjam.close_game_session"
   ],
   "standalone-game": [
@@ -32,6 +34,7 @@
     "airjam.inspect_game_agent_contract",
     "airjam.read_logs",
     "airjam.run_quality_gate",
+    "airjam.evaluate",
     "airjam.release_doctor",
     "airjam.release_validate",
     "airjam.release_bundle",
@@ -51,6 +54,7 @@
     "airjam.send_game_session_input",
     "airjam.read_game_session",
     "airjam.invoke_game_session_action",
+    "airjam.capture_game_session_visuals",
     "airjam.close_game_session"
   ],
   "unknown": ["airjam.inspect_project"]

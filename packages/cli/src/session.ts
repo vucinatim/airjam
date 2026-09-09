@@ -214,6 +214,23 @@ export const invokeSessionAction = async ({
     },
   });
 
+export const captureSessionVisuals = async ({
+  dir,
+  gameSessionId,
+  timeoutMs,
+}: {
+  dir?: string;
+  gameSessionId: string;
+  timeoutMs?: number;
+}): Promise<unknown> =>
+  request({
+    dir,
+    operation: {
+      operation: "capture",
+      input: { gameSessionId, timeoutMs },
+    },
+  });
+
 export const closeSession = async ({
   dir,
   gameSessionId,

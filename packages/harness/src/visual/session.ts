@@ -191,7 +191,7 @@ export type OpenVisualHarnessSessionOptions = {
   mode: VisualHarnessMode;
 };
 
-export type OpenVisualHarnessHostSessionResult = {
+type OpenVisualHarnessHostSessionResult = {
   urls: Omit<VisualHarnessUrls, "controllerJoinUrl"> & {
     controllerJoinUrl: null;
   };
@@ -208,7 +208,7 @@ export type OpenVisualHarnessSessionResult = {
   close: () => Promise<void>;
 };
 
-export const openVisualHarnessHostSession = async ({
+const openVisualHarnessHostSession = async ({
   browser,
   urls,
   mode,

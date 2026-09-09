@@ -21,6 +21,7 @@ import { validatePublicReleaseCandidate } from "./public-release-candidate.mjs";
 const require = createRequire(import.meta.url);
 const commandMaxBuffer = 64 * 1024 * 1024;
 const commandTimeoutMs = 10 * 60 * 1_000;
+const candidateRegistryWarmAttempts = 2;
 const rootPackageJson = JSON.parse(
   fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"),
 );
@@ -65,6 +66,14 @@ export const reserveLoopbackPort = () =>
       });
     });
   });
+
+export const reserveDistinctLoopbackPorts = async (count) => {
+  const ports = new Set();
+  while (ports.size < count) {
+    ports.add(await reserveLoopbackPort());
+  }
+  return [...ports];
+};
 
 export const resolveGoldenPathTemporaryRoot = ({
   environment = process.env,
@@ -325,6 +334,68 @@ const assertRegistryCandidateIntegrity = async ({
   }
 };
 
+export const warmCandidateRegistryDependencies = async ({
+  runRoot,
+  packageArtifacts,
+  run,
+}) => {
+  const preflightRoot = path.join(runRoot, "registry-preflight");
+  let lastError = null;
+
+  try {
+    for (
+      let attempt = 1;
+      attempt <= candidateRegistryWarmAttempts;
+      attempt += 1
+    ) {
+      fs.rmSync(preflightRoot, { recursive: true, force: true });
+      fs.mkdirSync(preflightRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(preflightRoot, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "airjam-golden-path-registry-preflight",
+            private: true,
+            version: "0.0.0",
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      try {
+        run(
+          `registry:warm-dependencies:${attempt}`,
+          "pnpm",
+          [
+            "--store-dir",
+            path.join(preflightRoot, "store"),
+            "add",
+            "--ignore-scripts",
+            ...packageArtifacts.map(
+              (artifact) => `${artifact.name}@${artifact.version}`,
+            ),
+          ],
+          preflightRoot,
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < candidateRegistryWarmAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+    }
+  } finally {
+    fs.rmSync(preflightRoot, { recursive: true, force: true });
+  }
+
+  throw new Error(
+    `Candidate registry dependency preflight failed after ${candidateRegistryWarmAttempts} attempts.`,
+    { cause: lastError },
+  );
+};
+
 const assertRegistrySafeProject = ({
   projectDir,
   registryUrl,
@@ -492,6 +563,11 @@ export const prepareGoldenPathCandidateRegistry = async ({
       registryUrl: registry.registryUrl,
       packageArtifacts,
     });
+    await warmCandidateRegistryDependencies({
+      runRoot,
+      packageArtifacts,
+      run,
+    });
     return {
       registry,
       version,
@@ -533,11 +609,7 @@ export const runGoldenPathBootstrap = async ({
   let managedDevStarted = false;
   let managedDevProcessId = null;
   let primaryError = null;
-  const port = await reserveLoopbackPort();
-  let gamePort = await reserveLoopbackPort();
-  while (gamePort === port) {
-    gamePort = await reserveLoopbackPort();
-  }
+  const [port, serverPort, gamePort] = await reserveDistinctLoopbackPorts(3);
   const registryUrl = `http://127.0.0.1:${port}`;
   const commandEnv = {
     ...process.env,
@@ -545,8 +617,10 @@ export const runGoldenPathBootstrap = async ({
     NO_UPDATE_NOTIFIER: "1",
     NO_COLOR: "1",
     FORCE_COLOR: "0",
+    AIR_JAM_SERVER_PORT: String(serverPort),
     VITE_PORT: String(gamePort),
-    AIRJAM_DEVTOOLS_KNOWN_PORTS: `4000,${gamePort}`,
+    VITE_AIR_JAM_PUBLIC_HOST: `http://127.0.0.1:${gamePort}`,
+    AIRJAM_DEVTOOLS_KNOWN_PORTS: `${serverPort},${gamePort}`,
     npm_config_audit: "false",
     npm_config_cache: path.join(runRoot, "npm-cache"),
     npm_config_registry: registryUrl,
@@ -772,9 +846,11 @@ export const runGoldenPathBootstrap = async ({
       label: "Candidate MCP server",
       requiredToolNames: [
         "airjam.inspect_project",
+        "airjam.evaluate",
         "airjam.open_game_session",
         "airjam.read_game_session",
         "airjam.invoke_game_session_action",
+        "airjam.capture_game_session_visuals",
         "airjam.close_game_session",
       ],
       expectedToolNames: standaloneGameMcpToolNames,
@@ -843,6 +919,8 @@ export const runGoldenPathBootstrap = async ({
         kind: "run-scoped-loopback-verdaccio",
         upstream: "https://registry.npmjs.org/",
         airJamPackagesProxied: false,
+        candidateDependencyGraphWarmed: true,
+        scaffoldDependencyGraphWarmed: false,
         published: packageArtifacts,
       },
       isolation: {

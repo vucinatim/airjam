@@ -121,6 +121,83 @@ test("waitForDeployment returns success once the deployment reaches a terminal s
   assert.equal(calls, 2);
 });
 
+test("waitForDeployment tolerates a transient provider read failure", async () => {
+  let calls = 0;
+  const client = createRailwayApiClient({
+    token: "token",
+    fetchImpl: createMockFetch(() => {
+      calls += 1;
+      if (calls === 1) throw new Error("transient read failure");
+      return {
+        data: {
+          deployment: {
+            id: "deployment-1",
+            status: "SUCCESS",
+            url: null,
+            staticUrl: "service.up.railway.app",
+          },
+        },
+      };
+    }),
+  });
+
+  const result = await client.waitForDeployment({
+    deploymentId: "deployment-1",
+    retries: 2,
+    retryDelayMs: 0,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.attempt, 2);
+  assert.equal(calls, 2);
+});
+
+test("waitForVolumeInstance tolerates delayed Railway attachment visibility", async () => {
+  let calls = 0;
+  const client = createRailwayApiClient({
+    token: "token",
+    fetchImpl: createMockFetch(() => {
+      calls += 1;
+      return {
+        data: {
+          environment: {
+            id: "environment-1",
+            name: "staging",
+            projectId: "project-1",
+            serviceInstances: { edges: [] },
+            volumeInstances: {
+              edges:
+                calls === 1
+                  ? []
+                  : [
+                      {
+                        node: {
+                          id: "volume-instance-1",
+                          serviceId: "service-1",
+                          mountPath: "/var/lib/postgresql/data",
+                        },
+                      },
+                    ],
+            },
+          },
+        },
+      };
+    }),
+  });
+
+  const result = await client.waitForVolumeInstance({
+    environmentId: "environment-1",
+    serviceId: "service-1",
+    mountPath: "/var/lib/postgresql/data",
+    retries: 2,
+    retryDelayMs: 0,
+  });
+
+  assert.equal(result.matched, true);
+  assert.equal(result.volume.id, "volume-instance-1");
+  assert.equal(result.attempt, 2);
+});
+
 test("Railway recovery helpers expose backup policy and exact deployment actions", async () => {
   const observed = [];
   const client = createRailwayApiClient({
@@ -140,6 +217,17 @@ test("Railway recovery helpers expose backup policy and exact deployment actions
                 referencedMB: 2,
               },
             ],
+          },
+        };
+      }
+      if (body.query.includes("RailwayVolumeCreate")) {
+        return {
+          data: {
+            volumeCreate: {
+              id: "volume-created",
+              name: "postgres-volume",
+              projectId: "project-1",
+            },
           },
         };
       }
@@ -209,6 +297,19 @@ test("Railway recovery helpers expose backup policy and exact deployment actions
     }),
     true,
   );
+  const createdVolume = await client.createVolume({
+    projectId: "project-1",
+    environmentId: "environment-1",
+    serviceId: "service-1",
+    mountPath: "/var/lib/postgresql/data",
+  });
+  assert.equal(createdVolume.id, "volume-created");
+  assert.deepEqual(observed[3].variables.input, {
+    projectId: "project-1",
+    environmentId: "environment-1",
+    serviceId: "service-1",
+    mountPath: "/var/lib/postgresql/data",
+  });
   const deployments = await client.listDeployments({
     projectId: "project-1",
     environmentId: "environment-1",
@@ -221,18 +322,18 @@ test("Railway recovery helpers expose backup policy and exact deployment actions
   });
   assert.equal(rollback, true);
   assert.doesNotMatch(
-    observed[4].query,
+    observed[5].query,
     /deploymentRollback\(id: \$id\)\s*\{/u,
   );
   assert.match(
-    observed[4].query,
+    observed[5].query,
     /mutation RailwayDeploymentRollback[\s\S]*deploymentRollback\(id: \$id\)\s*\}/u,
   );
   assert.deepEqual(observed[2].variables, {
     volumeInstanceId: "volume-1",
     kinds: ["DAILY", "WEEKLY"],
   });
-  assert.deepEqual(observed[4].variables, { id: "deployment-old" });
+  assert.deepEqual(observed[5].variables, { id: "deployment-old" });
 });
 
 test("Railway waits for a new service deployment matching the exact target", async () => {
