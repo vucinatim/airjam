@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { createCloudflareR2TemporaryCredentials } from "../lib/cloudflare-r2-temporary-credentials.mjs";
 import {
   assertGoldenPathStagingEnvironmentIsolation,
+  resolveGoldenPathRailwayStagingRuntime,
   resolveGoldenPathRailwayStagingTarget,
 } from "../lib/golden-path-staging-target.mjs";
 
@@ -108,6 +109,12 @@ const createServiceVariables = ({ environmentId, serviceId }) => {
     RAILWAY_SERVICE_ID: serviceId,
     NODE_ENV: "production",
   };
+  if (serviceId === "service-postgres") {
+    return {
+      ...common,
+      DATABASE_PUBLIC_URL: `postgresql://${suffix}.example.test/airjam`,
+    };
+  }
   if (serviceId === "service-platform") {
     return {
       ...common,
@@ -218,6 +225,8 @@ const createStagingFixture = () => ({
 const isolationInput = () => ({
   environment: createEnvironment(stagingEnvironmentId),
   primaryEnvironment: createEnvironment(productionEnvironmentId),
+  stagingDatabaseUrl: "postgresql://staging.example.test/airjam",
+  primaryDatabaseUrl: "postgresql://production.example.test/airjam",
   serviceVariablePairs: createServiceVariablePairs(),
 });
 
@@ -233,16 +242,19 @@ test("primary run requires provider identities instead of a trusted-looking URL"
 });
 
 test("primary run proves environment-wide isolation before health-checking staging", async () => {
-  const target = await resolveGoldenPathRailwayStagingTarget({
+  const runtime = await resolveGoldenPathRailwayStagingRuntime({
     projectId,
     environmentId: stagingEnvironmentId,
     ...createStagingFixture(),
   });
+  const { target } = runtime;
 
   assert.equal(target.provider, "railway");
   assert.equal(target.environmentId, stagingEnvironmentId);
   assert.equal(target.deploymentId, "deployment-service-platform-staging");
   assert.equal(target.url, "https://air-jam-platform-staging.up.railway.app");
+  assert.equal(runtime.databaseUrl, "postgresql://staging.example.test/airjam");
+  assert.equal(JSON.stringify(target).includes("postgresql://"), false);
   assert.deepEqual(target.isolation, {
     providerEnvironmentIdentity: true,
     applicationServiceInstancesDistinct: true,
@@ -256,10 +268,22 @@ test("primary run proves environment-wide isolation before health-checking stagi
       issuedAt: stagingR2Credential.issuedAt,
       expiresAt: stagingR2Credential.expiresAt,
       ttlSeconds: 86_400,
+      endpointHostname: "cloudflare-account.r2.cloudflarestorage.com",
     },
     releasePipelineIsolated: true,
     publicOriginDistinct: true,
   });
+});
+
+test("public staging status never returns its private database target", async () => {
+  const target = await resolveGoldenPathRailwayStagingTarget({
+    projectId,
+    environmentId: stagingEnvironmentId,
+    ...createStagingFixture(),
+  });
+
+  assert.equal("databaseUrl" in target, false);
+  assert.equal(JSON.stringify(target).includes("postgresql://"), false);
 });
 
 test("primary run rejects Railway's production environment before resolution", async () => {
@@ -347,5 +371,14 @@ test("environment proof rejects shared non-scoped databases", () => {
   assert.throws(
     () => assertGoldenPathStagingEnvironmentIsolation(input),
     /reuses production value for DATABASE_URL/u,
+  );
+});
+
+test("environment proof rejects a shared public Postgres target", () => {
+  const input = isolationInput();
+  input.stagingDatabaseUrl = input.primaryDatabaseUrl;
+  assert.throws(
+    () => assertGoldenPathStagingEnvironmentIsolation(input),
+    /same public target as production/u,
   );
 });

@@ -9,7 +9,9 @@ import { fileURLToPath } from "node:url";
 import {
   buildCodexPermissionArgs,
   buildGoldenPathCommandEnv,
-  isControlCheckpointEvent,
+  eventRequiresSessionBroker,
+  isPassingEvaluationEvent,
+  sanitizeEvidenceTree,
   startProjectScopedSessionBroker,
   verifyPrimaryRun,
 } from "../lib/golden-path-primary-run.mjs";
@@ -127,7 +129,11 @@ test("golden-path validation rejects unsafe publication and malformed stage orde
 test("primary-run isolation permits only run-owned writes and declared network targets", () => {
   const runRoot = "/tmp/airjam-golden-path-contract-run";
   const stagingUrl = "https://air-jam-platform-pr-123.example.test";
-  const permissions = buildCodexPermissionArgs({ runRoot, stagingUrl });
+  const permissions = buildCodexPermissionArgs({
+    runRoot,
+    stagingUrl,
+    additionalNetworkHostnames: ["cloudflare-account.r2.cloudflarestorage.com"],
+  });
   const joinedArgs = permissions.args.join("\n");
   const joinedProbeArgs = permissions.globalArgs.join("\n");
 
@@ -137,6 +143,7 @@ test("primary-run isolation permits only run-owned writes and declared network t
   assert.match(joinedArgs, /allow_local_binding=true/);
   assert.match(joinedArgs, /network\.unix_sockets/);
   assert.match(joinedArgs, /air-jam-platform-pr-123\.example\.test/);
+  assert.match(joinedArgs, /cloudflare-account\.r2\.cloudflarestorage\.com/);
   assert.match(joinedArgs, /127\.0\.0\.1/);
   assert.match(joinedArgs, /localhost/);
   assert.match(joinedArgs, /--add-dir/u);
@@ -180,10 +187,7 @@ test("primary-run child environment drops inherited credentials and isolates cac
   assert.equal(environment.pnpm_config_store_dir, `${runRoot}/pnpm-store`);
   assert.equal(environment.AIR_JAM_SERVER_PORT, "4400");
   assert.equal(environment.VITE_PORT, "5573");
-  assert.equal(
-    environment.VITE_AIR_JAM_PUBLIC_HOST,
-    "http://127.0.0.1:5573",
-  );
+  assert.equal(environment.VITE_AIR_JAM_PUBLIC_HOST, "http://127.0.0.1:5573");
   assert.equal(environment.VITE_AIR_JAM_SERVER_URL, undefined);
   assert.equal(environment.AIR_JAM_DEV_PROXY_BACKEND_URL, undefined);
   assert.equal(environment.AIRJAM_DEVTOOLS_KNOWN_PORTS, "4400,5573");
@@ -232,28 +236,108 @@ test("primary-run launches the installed session broker outside the agent sandbo
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test("primary-run control checkpoint rejects failed MCP closes", () => {
-  const closeEvent = (item) => ({
+test("primary-run quality checkpoint accepts only a successful complete evaluation", () => {
+  const evaluationEvent = (item) => ({
     type: "item.completed",
     item: {
-      type: "mcp_tool_call",
-      tool_name: "airjam.close_game_session",
+      type: "command_execution",
+      command: "pnpm exec airjam evaluate --dir .",
       ...item,
     },
   });
 
   assert.equal(
-    isControlCheckpointEvent(closeEvent({ result: { ok: true } })),
+    isPassingEvaluationEvent(
+      evaluationEvent({
+        exit_code: 0,
+        aggregated_output:
+          '{"contract":"air-jam-complete-evaluation/v1","status":"passed"}',
+      }),
+    ),
     true,
   );
   assert.equal(
-    isControlCheckpointEvent(closeEvent({ result: { isError: true } })),
+    isPassingEvaluationEvent(
+      evaluationEvent({
+        exit_code: 1,
+        aggregated_output:
+          '{"contract":"air-jam-complete-evaluation/v1","status":"failed"}',
+      }),
+    ),
     false,
   );
   assert.equal(
-    isControlCheckpointEvent(closeEvent({ status: "failed", error: "boom" })),
+    isPassingEvaluationEvent(
+      evaluationEvent({ exit_code: 0, aggregated_output: "not json" }),
+    ),
     false,
   );
+});
+
+test("a stopped controller broker is rearmed only for semantic session work", () => {
+  const commandEvent = (command) => ({
+    type: "item.started",
+    item: { type: "command_execution", command },
+  });
+  assert.equal(
+    eventRequiresSessionBroker(
+      commandEvent("pnpm exec airjam session open --dir ."),
+    ),
+    true,
+  );
+  assert.equal(
+    eventRequiresSessionBroker(commandEvent("pnpm exec airjam status --dir .")),
+    false,
+  );
+  assert.equal(
+    eventRequiresSessionBroker(
+      commandEvent("pnpm exec airjam session broker stop --dir ."),
+    ),
+    false,
+  );
+  assert.equal(
+    eventRequiresSessionBroker({
+      type: "item.started",
+      item: {
+        type: "mcp_tool_call",
+        tool_name: "airjam.capture_game_session_visuals",
+      },
+    }),
+    true,
+  );
+});
+
+test("evidence sanitization preserves declared release and visual artifacts", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "airjam-g2-evidence-"));
+  try {
+    fs.writeFileSync(path.join(root, "trace.txt"), "/run/private\n");
+    fs.writeFileSync(path.join(root, "capture.png"), Buffer.from([0, 1, 2]));
+    fs.writeFileSync(
+      path.join(root, "release.zip"),
+      Buffer.from([80, 75, 3, 4]),
+    );
+
+    sanitizeEvidenceTree({
+      evidenceDir: root,
+      runRoot: "/run/private",
+      registryUrl: "http://127.0.0.1:4873",
+    });
+
+    assert.equal(
+      fs.readFileSync(path.join(root, "trace.txt"), "utf8"),
+      "<run>\n",
+    );
+    assert.deepEqual(
+      fs.readFileSync(path.join(root, "capture.png")),
+      Buffer.from([0, 1, 2]),
+    );
+    assert.deepEqual(
+      fs.readFileSync(path.join(root, "release.zip")),
+      Buffer.from([80, 75, 3, 4]),
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("primary verifier preserves a complete classified blocker", () => {

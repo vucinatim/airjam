@@ -194,6 +194,13 @@ const generatedContentDocsDocuments = [
           'This project is "vibecode friendly"—it includes documentation and AI instructions to help you build faster. Check AGENTS.md: Project-wide coding contract and workflow for AI coding assistants. Check…',
       },
       {
+        title: "Run the Complete Evaluation",
+        slug: "run-the-complete-evaluation",
+        depth: 3,
+        excerpt:
+          "Before sharing a game—and again after any repair—run the canonical complete evaluation: It returns one machine-readable air-jam-complete-evaluation/v1 document containing the results of typecheck, lint, tests, and the…",
+      },
+      {
         title: "Refresh Managed Framework Guidance",
         slug: "refresh-managed-framework-guidance",
         depth: 3,
@@ -213,6 +220,13 @@ const generatedContentDocsDocuments = [
         depth: 3,
         excerpt:
           "Verify pnpm run dev is running. Confirm server health: http://localhost:4000/health. Confirm your game is using http://localhost:4000 for VITEAIRJAMSERVERURL (or no override at all for local defaults).",
+      },
+      {
+        title: "Local port already in use",
+        slug: "local-port-already-in-use",
+        depth: 3,
+        excerpt:
+          "Each parallel agent or project can run an isolated stack without stopping another one: pnpm exec airjam topology --mode=standalone-dev honors the same environment, so the CLI, semantic sessions, QR URL, Vite proxy, and…",
       },
       {
         title: "App ID errors in deployed environments",

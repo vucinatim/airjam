@@ -15,8 +15,14 @@ import {
   readGoldenPathProgram,
   validateGoldenPathProgram,
 } from "./golden-path-program.mjs";
-import { resolveGoldenPathRailwayStagingTarget } from "./golden-path-staging-target.mjs";
+import {
+  provisionGoldenPathStagingIdentity,
+  revokeGoldenPathStagingIdentity,
+  verifyGoldenPathHiddenRelease,
+} from "./golden-path-staging-identity.mjs";
+import { resolveGoldenPathRailwayStagingRuntime } from "./golden-path-staging-target.mjs";
 import { repoRoot } from "./paths.mjs";
+import { createRailwayApiClient } from "./railway-api.mjs";
 
 const evidenceFormat = "air-jam-golden-path-evidence/v1";
 const commandMaxBuffer = 64 * 1024 * 1024;
@@ -30,6 +36,10 @@ const agentOwnedIndexPaths = new Set([
   "visual/index.json",
   "release/index.json",
   "failures/index.json",
+]);
+const binaryEvidenceMediaTypes = new Map([
+  [".png", "image/png"],
+  [".zip", "application/zip"],
 ]);
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
@@ -164,13 +174,17 @@ const indexEvidenceFiles = (evidenceDir) =>
       const value = fs.readFileSync(absolutePath);
       return {
         path: relativePath,
-        mediaType: relativePath.endsWith(".json")
-          ? "application/json"
-          : relativePath.endsWith(".ndjson")
-            ? "application/x-ndjson"
-            : relativePath.endsWith(".md")
-              ? "text/markdown"
-              : "application/octet-stream",
+        mediaType:
+          binaryEvidenceMediaTypes.get(path.extname(relativePath)) ??
+          (relativePath.endsWith(".json")
+            ? "application/json"
+            : relativePath.endsWith(".ndjson")
+              ? "application/x-ndjson"
+              : relativePath.endsWith(".md")
+                ? "text/markdown"
+                : relativePath.endsWith(".txt")
+                  ? "text/plain"
+                  : "application/octet-stream"),
         bytes: value.byteLength,
         sha256: sha256(value),
       };
@@ -181,9 +195,10 @@ export const sanitizeEvidenceTree = ({ evidenceDir, runRoot, registryUrl }) => {
   for (const relativePath of listEvidenceFiles(evidenceDir)) {
     const absolutePath = path.join(evidenceDir, relativePath);
     const bytes = fs.readFileSync(absolutePath);
+    if (binaryEvidenceMediaTypes.has(path.extname(relativePath))) continue;
     if (bytes.includes(0)) {
       throw new Error(
-        `Golden-path evidence must be text; binary file found at ${relativePath}.`,
+        `Golden-path evidence uses an undeclared binary type at ${relativePath}.`,
       );
     }
     let source;
@@ -239,25 +254,31 @@ const detectQualityCommand = (command) => {
   return detected;
 };
 
-export const isControlCheckpointEvent = (event) => {
+export const isPassingEvaluationEvent = (event) => {
   if (event.type !== "item.completed") return false;
-  if (event.item?.type === "command_execution" && event.item.exit_code === 0) {
-    return /(?:^|\s)airjam\s+session\s+close(?:\s|$)/u.test(
-      event.item.command ?? "",
+  if (event.item?.type !== "command_execution" || event.item.exit_code !== 0) {
+    return false;
+  }
+  const command = event.item.command ?? "";
+  const output = event.item.aggregated_output ?? "";
+  return (
+    /(?:^|\s)airjam\s+evaluate(?:\s|$)/u.test(command) &&
+    /"contract"\s*:\s*"air-jam-complete-evaluation\/v1"/u.test(output) &&
+    /"status"\s*:\s*"passed"/u.test(output)
+  );
+};
+
+export const eventRequiresSessionBroker = (event) => {
+  if (event.type !== "item.started") return false;
+  const item = event.item;
+  if (item?.type === "command_execution") {
+    return /(?:airjam\s+session\s+(?:open|read|invoke|capture)|(?:open|read|invoke|capture)_game_session)/u.test(
+      item.command ?? "",
     );
   }
-  if (event.item?.type !== "mcp_tool_call") return false;
-  const item = event.item;
-  const successful =
-    item.status !== "failed" &&
-    item.error == null &&
-    item.is_error !== true &&
-    item.isError !== true &&
-    item.result?.is_error !== true &&
-    item.result?.isError !== true;
-  return (
-    successful &&
-    /(?:^|[._])close_game_session$/u.test(item.tool_name ?? item.name ?? "")
+  if (item?.type !== "mcp_tool_call") return false;
+  return /(?:^|[._])(?:open|read|invoke|capture)_game_session(?:_visuals)?$/u.test(
+    item.tool_name ?? item.name ?? "",
   );
 };
 
@@ -305,12 +326,19 @@ const tomlInlineStringMap = (value) =>
     .map(([key, entry]) => `${JSON.stringify(key)}=${JSON.stringify(entry)}`)
     .join(",")}}`;
 
-export const buildCodexPermissionArgs = ({ stagingUrl, runRoot }) => {
+export const buildCodexPermissionArgs = ({
+  stagingUrl,
+  runRoot,
+  additionalNetworkHostnames = [],
+}) => {
   const stagingHostname = new URL(stagingUrl).hostname;
   const networkDomains = {
     "127.0.0.1": "allow",
     localhost: "allow",
     [stagingHostname]: "allow",
+    ...Object.fromEntries(
+      additionalNetworkHostnames.map((hostname) => [hostname, "allow"]),
+    ),
   };
   const filesystem = {
     [repoRoot]: "deny",
@@ -752,10 +780,13 @@ export const runGoldenPathPrimary = async ({
     throw new Error("Primary-agent timeout must be a positive integer.");
   }
   onProgress("staging:attest");
-  const stagingTarget = await resolveGoldenPathRailwayStagingTarget({
-    projectId: railwayProjectId,
-    environmentId: railwayEnvironmentId,
-  });
+  const railwayClient = createRailwayApiClient();
+  const { target: stagingTarget, databaseUrl: stagingDatabaseUrl } =
+    await resolveGoldenPathRailwayStagingRuntime({
+      projectId: railwayProjectId,
+      environmentId: railwayEnvironmentId,
+      client: railwayClient,
+    });
   const normalizedStagingUrl = stagingTarget.url;
   const programState = readGoldenPathProgram(defaultGoldenPathManifestPath);
   validateGoldenPathProgram(programState);
@@ -916,12 +947,16 @@ export const runGoldenPathPrimary = async ({
   let codexChild;
   let controllerSessionBroker;
   let controllerSessionBrokerLaunch;
+  let controllerSessionBrokerStarted = false;
   let fault = null;
   let codexExitCode = null;
   let interruptedSignal = null;
   let registryRemoved = false;
   let credentialsRemoved = false;
   let packagesRemoved = false;
+  let stagingIdentity = null;
+  let stagingIdentityCleanup = "not-provisioned";
+  let releaseVerification = null;
   const projectCleanup = [];
   const signalCodexProcessGroup = (signal) => {
     if (!codexChild || codexChild.exitCode !== null) return;
@@ -943,7 +978,6 @@ export const runGoldenPathPrimary = async ({
   process.once("SIGTERM", handleSigterm);
   const completedInitialQuality = new Set();
   const controllerQuality = new Set();
-  let completedInitialControl = false;
   let checkpointObservationRevision = 0;
   let lastValidatedCheckpointRevision = 0;
   const transcriptPath = path.join(evidenceDir, "transcript", "events.ndjson");
@@ -951,6 +985,17 @@ export const runGoldenPathPrimary = async ({
   syncEvidence();
 
   try {
+    onProgress("staging:identity:provision");
+    stagingIdentity = await provisionGoldenPathStagingIdentity({
+      databaseUrl: stagingDatabaseUrl,
+      stagingTarget,
+      runId,
+      stateDirectory: path.join(runRoot, "state"),
+    });
+    stagingIdentityCleanup = "pending";
+    onProgress("staging:identity:validated");
+    syncEvidence();
+
     const prepared = await prepareGoldenPathCandidateRegistry({
       runRoot,
       port: registryPort,
@@ -996,6 +1041,9 @@ export const runGoldenPathPrimary = async ({
     const codexPermissions = buildCodexPermissionArgs({
       stagingUrl: normalizedStagingUrl,
       runRoot,
+      additionalNetworkHostnames: [
+        stagingTarget.isolation.releaseStorageCredential.endpointHostname,
+      ],
     });
     const isolationProbe = probeGoldenPathIsolation({
       commandEnv,
@@ -1027,6 +1075,7 @@ export const runGoldenPathPrimary = async ({
       requestedProductionAllowed: false,
       requestedArcadeVisibility: "hidden",
       platformReleaseVerification: null,
+      stagingMachineIdentity: stagingIdentity.record,
       privateRepositoryContextProvided: false,
       workspaceOutsideAirJamMonorepo: workspaceOutsideRepo,
       inheritedCredentialEnvironment: false,
@@ -1115,8 +1164,16 @@ export const runGoldenPathPrimary = async ({
       fs.mkdirSync(path.dirname(retainedTranscriptPath), { recursive: true });
       fs.appendFileSync(retainedTranscriptPath, record);
     };
-    const ensureControllerSessionBroker = () => {
-      if (controllerSessionBrokerLaunch) return;
+    const ensureControllerSessionBroker = ({ required = false } = {}) => {
+      if (
+        controllerSessionBrokerLaunch &&
+        controllerSessionBroker?.exitCode === null
+      ) {
+        return;
+      }
+      controllerSessionBrokerLaunch = null;
+      controllerSessionBroker = null;
+      if (controllerSessionBrokerStarted && !required) return;
       const launched = startProjectScopedSessionBroker({
         projectDir,
         commandEnv,
@@ -1130,6 +1187,14 @@ export const runGoldenPathPrimary = async ({
 
       controllerSessionBrokerLaunch = launched;
       controllerSessionBroker = launched.child;
+      controllerSessionBrokerStarted = true;
+      const launchedChild = launched.child;
+      launchedChild.once("exit", () => {
+        if (controllerSessionBroker !== launchedChild) return;
+        controllerSessionBroker = null;
+        controllerSessionBrokerLaunch = null;
+        onProgress("session-broker:exited");
+      });
       const record = {
         owner: "run-controller",
         scope: "isolated-project-only",
@@ -1162,7 +1227,9 @@ export const runGoldenPathPrimary = async ({
       // soon as the installed candidate CLI exists. The agent still owns all
       // session operations through the public CLI/MCP contract, while the
       // broker remains pinned to this isolated project directory.
-      ensureControllerSessionBroker();
+      ensureControllerSessionBroker({
+        required: eventRequiresSessionBroker(event),
+      });
       if (
         event.type === "item.completed" &&
         event.item?.type === "command_execution" &&
@@ -1176,13 +1243,14 @@ export const runGoldenPathPrimary = async ({
           }
         }
       }
-      if (!fault && isControlCheckpointEvent(event)) {
-        completedInitialControl = true;
+      if (!fault && isPassingEvaluationEvent(event)) {
+        for (const id of initialQualityCommands) {
+          completedInitialQuality.add(id);
+        }
         checkpointObservationRevision += 1;
       }
       if (
         !fault &&
-        completedInitialControl &&
         initialQualityCommands.every((id) => completedInitialQuality.has(id)) &&
         checkpointObservationRevision > lastValidatedCheckpointRevision
       ) {
@@ -1292,6 +1360,35 @@ export const runGoldenPathPrimary = async ({
       }
     }
 
+    if (codexExitCode === 0 && stagingIdentity) {
+      onProgress("staging:release:verify");
+      try {
+        releaseVerification = await verifyGoldenPathHiddenRelease({
+          stagingTarget,
+          runId,
+          token: stagingIdentity.token,
+        });
+      } catch (error) {
+        releaseVerification = {
+          verifiedAt: new Date().toISOString(),
+          status: "verification-failed",
+          arcadeVisibility: null,
+          productionAllowed: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      const isolationPath = path.join(
+        evidenceDir,
+        "environment",
+        "isolation.json",
+      );
+      const isolation = JSON.parse(fs.readFileSync(isolationPath, "utf8"));
+      writeJson(isolationPath, {
+        ...isolation,
+        platformReleaseVerification: releaseVerification,
+      });
+    }
+
     if (fs.existsSync(projectDir)) {
       for (const [id, args] of [
         [
@@ -1316,6 +1413,13 @@ export const runGoldenPathPrimary = async ({
     }
     fs.rmSync(path.join(runRoot, "registry"), { recursive: true, force: true });
     registryRemoved = !fs.existsSync(path.join(runRoot, "registry"));
+    if (stagingIdentity && stagingIdentityCleanup === "pending") {
+      onProgress("staging:identity:revoke");
+      stagingIdentityCleanup = await revokeGoldenPathStagingIdentity({
+        stagingTarget,
+        token: stagingIdentity.token,
+      });
+    }
     fs.rmSync(path.join(runRoot, "state"), { recursive: true, force: true });
     credentialsRemoved = !fs.existsSync(path.join(runRoot, "state"));
     fs.rmSync(path.join(runRoot, "packages"), { recursive: true, force: true });
@@ -1338,7 +1442,7 @@ export const runGoldenPathPrimary = async ({
       codexExitCode,
       controllerQuality,
       projectCleanup,
-      releaseVerification: null,
+      releaseVerification,
       runRoot,
       registryUrl,
     });
@@ -1359,7 +1463,6 @@ export const runGoldenPathPrimary = async ({
         ...stagingTarget,
         requestedProductionAllowed: false,
         requestedArcadeVisibility: "hidden",
-        verification: null,
       },
       startedAt,
       endedAt: new Date().toISOString(),
@@ -1370,6 +1473,7 @@ export const runGoldenPathPrimary = async ({
       cleanup: {
         registry: registryRemoved ? "removed" : "not-removed",
         credentials: credentialsRemoved ? "removed" : "not-removed",
+        remoteMachineSession: stagingIdentityCleanup,
         packages: packagesRemoved ? "removed" : "not-removed",
         projectProcesses: projectCleanup,
         workspace: keepWorkspace ? "retained" : "scheduled-for-removal",
@@ -1414,6 +1518,12 @@ export const runGoldenPathPrimary = async ({
       await stopChild(controllerSessionBroker);
     }
     if (registry) await stopChild(registry.child);
+    if (stagingIdentity && stagingIdentityCleanup === "pending") {
+      stagingIdentityCleanup = await revokeGoldenPathStagingIdentity({
+        stagingTarget,
+        token: stagingIdentity.token,
+      });
+    }
     if (fs.existsSync(evidenceDir)) {
       bestEffortSyncEvidence();
     }

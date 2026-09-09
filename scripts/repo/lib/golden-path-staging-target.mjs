@@ -1,4 +1,5 @@
 import { verifyCloudflareR2TemporaryCredentials } from "./cloudflare-r2-temporary-credentials.mjs";
+import { resolveRailwayDatabaseUrl } from "./platform-database-target.mjs";
 import { createRailwayApiClient } from "./railway-api.mjs";
 
 const railwayPlatformConfigFile = "/apps/platform/railway.json";
@@ -226,6 +227,8 @@ const resolveApplicationServicePairs = ({
 const assertDatabaseIsolation = ({
   environment,
   primaryEnvironment,
+  stagingDatabaseUrl,
+  primaryDatabaseUrl,
   serviceVariablePairs,
 }) => {
   const stagingPostgres = findGoldenPathPostgresInstance(environment);
@@ -245,18 +248,35 @@ const assertDatabaseIsolation = ({
     stagingVariables,
     primaryVariables,
   } of serviceVariablePairs) {
-    const stagingDatabaseUrl = variableValue(stagingVariables, "DATABASE_URL");
-    const primaryDatabaseUrl = variableValue(primaryVariables, "DATABASE_URL");
+    const applicationStagingDatabaseUrl = variableValue(
+      stagingVariables,
+      "DATABASE_URL",
+    );
+    const applicationPrimaryDatabaseUrl = variableValue(
+      primaryVariables,
+      "DATABASE_URL",
+    );
     if (
-      stagingDatabaseUrl &&
-      primaryDatabaseUrl &&
-      stagingDatabaseUrl === primaryDatabaseUrl &&
-      !isRailwayEnvironmentScopedUrl(stagingDatabaseUrl)
+      applicationStagingDatabaseUrl &&
+      applicationPrimaryDatabaseUrl &&
+      applicationStagingDatabaseUrl === applicationPrimaryDatabaseUrl &&
+      !isRailwayEnvironmentScopedUrl(applicationStagingDatabaseUrl)
     ) {
       throw new Error(
         `Railway staging ${serviceName} DATABASE_URL resolves to the same non-scoped database as production.`,
       );
     }
+  }
+
+  if (!stagingDatabaseUrl || !primaryDatabaseUrl) {
+    throw new Error(
+      "Railway staging and production must expose locally reachable Postgres targets for rehearsal attestation.",
+    );
+  }
+  if (stagingDatabaseUrl === primaryDatabaseUrl) {
+    throw new Error(
+      "Railway staging Postgres resolves to the same public target as production.",
+    );
   }
 };
 
@@ -450,12 +470,17 @@ const assertReleaseIsolation = ({
     );
   }
 
-  return temporaryCredential;
+  return {
+    ...temporaryCredential,
+    endpointHostname: new URL(endpoint).hostname,
+  };
 };
 
 export const assertGoldenPathStagingEnvironmentIsolation = ({
   environment,
   primaryEnvironment,
+  stagingDatabaseUrl,
+  primaryDatabaseUrl,
   serviceVariablePairs,
 }) => {
   for (const pair of serviceVariablePairs) {
@@ -474,6 +499,8 @@ export const assertGoldenPathStagingEnvironmentIsolation = ({
   assertDatabaseIsolation({
     environment,
     primaryEnvironment,
+    stagingDatabaseUrl,
+    primaryDatabaseUrl,
     serviceVariablePairs,
   });
   const releaseStorageCredential = assertReleaseIsolation({
@@ -580,6 +607,7 @@ export const resolveGoldenPathStagingEnvironmentPair = async ({
     primaryEnvironmentId,
     servicePairs,
     stagingPostgres,
+    primaryPostgres,
   };
 };
 
@@ -614,7 +642,7 @@ export const collectGoldenPathServiceVariablePairs = async ({
     }),
   );
 
-export const resolveGoldenPathRailwayStagingTarget = async ({
+export const resolveGoldenPathRailwayStagingRuntime = async ({
   projectId,
   environmentId,
   client = createRailwayApiClient(),
@@ -626,6 +654,8 @@ export const resolveGoldenPathRailwayStagingTarget = async ({
     primaryEnvironment,
     primaryEnvironmentId,
     servicePairs,
+    stagingPostgres,
+    primaryPostgres,
   } = await resolveGoldenPathStagingEnvironmentPair({
     projectId,
     environmentId,
@@ -653,16 +683,40 @@ export const resolveGoldenPathRailwayStagingTarget = async ({
   }
   const deployment = platformPair.stagingInstance.latestDeployment;
 
-  const serviceVariablePairs = await collectGoldenPathServiceVariablePairs({
-    client,
-    projectId,
-    environmentId,
-    primaryEnvironmentId,
-    servicePairs,
-  });
+  const [
+    serviceVariablePairs,
+    stagingPostgresVariables,
+    primaryPostgresVariables,
+  ] = await Promise.all([
+    collectGoldenPathServiceVariablePairs({
+      client,
+      projectId,
+      environmentId,
+      primaryEnvironmentId,
+      servicePairs,
+    }),
+    client.getVariables({
+      projectId,
+      environmentId,
+      serviceId: stagingPostgres.serviceId,
+    }),
+    client.getVariables({
+      projectId,
+      environmentId: primaryEnvironmentId,
+      serviceId: primaryPostgres.serviceId,
+    }),
+  ]);
+  const stagingDatabaseUrl = resolveRailwayDatabaseUrl(
+    stagingPostgresVariables,
+  );
+  const primaryDatabaseUrl = resolveRailwayDatabaseUrl(
+    primaryPostgresVariables,
+  );
   const environmentIsolation = assertGoldenPathStagingEnvironmentIsolation({
     environment,
     primaryEnvironment,
+    stagingDatabaseUrl,
+    primaryDatabaseUrl,
     serviceVariablePairs,
   });
 
@@ -704,7 +758,7 @@ export const resolveGoldenPathRailwayStagingTarget = async ({
     );
   }
 
-  return {
+  const target = {
     provider: "railway",
     projectId,
     projectName: project.name,
@@ -721,4 +775,9 @@ export const resolveGoldenPathRailwayStagingTarget = async ({
     verifiedAt: new Date().toISOString(),
     productionAllowed: false,
   };
+
+  return { target, databaseUrl: stagingDatabaseUrl };
 };
+
+export const resolveGoldenPathRailwayStagingTarget = async (options) =>
+  (await resolveGoldenPathRailwayStagingRuntime(options)).target;
