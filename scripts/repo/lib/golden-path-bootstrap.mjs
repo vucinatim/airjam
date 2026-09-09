@@ -21,6 +21,7 @@ import { validatePublicReleaseCandidate } from "./public-release-candidate.mjs";
 const require = createRequire(import.meta.url);
 const commandMaxBuffer = 64 * 1024 * 1024;
 const commandTimeoutMs = 10 * 60 * 1_000;
+const candidateRegistryWarmAttempts = 2;
 const rootPackageJson = JSON.parse(
   fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"),
 );
@@ -333,6 +334,68 @@ const assertRegistryCandidateIntegrity = async ({
   }
 };
 
+export const warmCandidateRegistryDependencies = async ({
+  runRoot,
+  packageArtifacts,
+  run,
+}) => {
+  const preflightRoot = path.join(runRoot, "registry-preflight");
+  let lastError = null;
+
+  try {
+    for (
+      let attempt = 1;
+      attempt <= candidateRegistryWarmAttempts;
+      attempt += 1
+    ) {
+      fs.rmSync(preflightRoot, { recursive: true, force: true });
+      fs.mkdirSync(preflightRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(preflightRoot, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "airjam-golden-path-registry-preflight",
+            private: true,
+            version: "0.0.0",
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      try {
+        run(
+          `registry:warm-dependencies:${attempt}`,
+          "pnpm",
+          [
+            "--store-dir",
+            path.join(preflightRoot, "store"),
+            "add",
+            "--ignore-scripts",
+            ...packageArtifacts.map(
+              (artifact) => `${artifact.name}@${artifact.version}`,
+            ),
+          ],
+          preflightRoot,
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < candidateRegistryWarmAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+    }
+  } finally {
+    fs.rmSync(preflightRoot, { recursive: true, force: true });
+  }
+
+  throw new Error(
+    `Candidate registry dependency preflight failed after ${candidateRegistryWarmAttempts} attempts.`,
+    { cause: lastError },
+  );
+};
+
 const assertRegistrySafeProject = ({
   projectDir,
   registryUrl,
@@ -499,6 +562,11 @@ export const prepareGoldenPathCandidateRegistry = async ({
     await assertRegistryCandidateIntegrity({
       registryUrl: registry.registryUrl,
       packageArtifacts,
+    });
+    await warmCandidateRegistryDependencies({
+      runRoot,
+      packageArtifacts,
+      run,
     });
     return {
       registry,
@@ -851,6 +919,8 @@ export const runGoldenPathBootstrap = async ({
         kind: "run-scoped-loopback-verdaccio",
         upstream: "https://registry.npmjs.org/",
         airJamPackagesProxied: false,
+        candidateDependencyGraphWarmed: true,
+        scaffoldDependencyGraphWarmed: false,
         published: packageArtifacts,
       },
       isolation: {

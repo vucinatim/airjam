@@ -1020,6 +1020,8 @@ export const runGoldenPathPrimary = async ({
       temporaryDirectory: "<run>/tmp",
       candidateRegistry: "<candidate-registry>",
       airJamUpstreamFallback: false,
+      candidateDependencyGraphWarmed: true,
+      scaffoldDependencyGraphWarmed: false,
       stagingPlatform: normalizedStagingUrl,
       stagingProvider: stagingTarget,
       requestedProductionAllowed: false,
