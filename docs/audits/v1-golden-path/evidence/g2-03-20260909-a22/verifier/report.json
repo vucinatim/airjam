@@ -1,0 +1,9 @@
+{
+  "contract": "air-jam-golden-path-evidence/v1",
+  "scope": "codex-primary",
+  "verifiedAt": "2026-09-09T04:24:05.319Z",
+  "result": "passed",
+  "failures": [],
+  "notEvaluated": [],
+  "note": "This verifier certifies only the Codex primary lane. Claude Desktop remains independently owned by G2-04."
+}

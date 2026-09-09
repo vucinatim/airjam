@@ -115,6 +115,9 @@ Thumbs.db
 # Canonical machine-owned release state (formatted by the readiness CLI)
 scripts/repo/programs/v1-release-program.json
 
+# Immutable, digest-bound external-agent evidence
+docs/audits/v1-golden-path/evidence/
+
 # Email templates
 emails/out/
 

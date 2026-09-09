@@ -69,7 +69,10 @@ const normalizeEvidenceText = (value, { runRoot, registryUrl }) =>
     .replaceAll(registryUrl, "<candidate-registry>")
     .replace(/(^|\n)([^\n]*:_authToken=)[^\n]+/gu, "$1$2<redacted>")
     .replace(/(authorization:\s*bearer\s+)[^\s"']+/giu, "$1<redacted>")
-    .replace(/([?&](?:token|code|secret|key)=)[^&\s"']+/giu, "$1<redacted>");
+    .replace(
+      /([?&](?:token|code|secret|key|aj_controller_cap)=)[^&\s"'\\]+/giu,
+      "$1<redacted>",
+    );
 
 const defaultRunId = () => {
   const timestamp = new Date()

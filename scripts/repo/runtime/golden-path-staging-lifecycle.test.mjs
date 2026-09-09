@@ -172,6 +172,9 @@ const createFixture = () => {
         initialVariables({ environmentId: environment.id, serviceName }),
       );
     }
+    variables.set(`${environment.id}:postgres-service`, {
+      DATABASE_PUBLIC_URL: `postgresql://${environment.id}.example.test/airjam`,
+    });
   }
   const writes = [];
   const deployments = [];

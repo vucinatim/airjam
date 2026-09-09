@@ -1,6 +1,6 @@
 # Air Jam Work Ledger
 
-Last updated: 2026-09-08
+Last updated: 2026-09-09
 Status: historical memory
 
 This file is the append-only historical memory for the repo.
@@ -17,6 +17,31 @@ For the current snapshot, use [current-state.md](./current-state.md).
 The pre-reset overloaded ledger has been preserved at:
 
 1. [archive/2026-05-08-work-ledger-pre-os-reset.md](./archive/2026-05-08-work-ledger-pre-os-reset.md)
+
+## 2026-09-09 - The Clean-Room Codex Lifecycle Passed End To End
+
+- completed the first controller-certified external-agent lifecycle from an
+  empty workspace with no Air Jam repository access, maintainer credentials,
+  provider credentials, or undeclared network access
+- proved public package discovery, scaffolding, game implementation, complete
+  evaluation, two-controller semantic play, authoritative state inspection,
+  machine visual capture, deterministic fault diagnosis and repair, release
+  bundling, hidden staging submission, independent verification, and cleanup
+- used repeated classified failures as product evidence to close real seams in
+  Node module resolution, evaluation discovery, browser ownership, visual
+  capture, candidate-registry warming, presigned upload access, R2 metadata,
+  staging database identity, run-scoped authentication, and stale-runtime
+  recovery
+- retained the 144-event sanitized transcript and decisive machine artifacts
+  under
+  [the G2-03 evidence directory](./audits/v1-golden-path/evidence/g2-03-20260909-a22/),
+  with 149 source artifacts bound by the run manifest
+- verified ready hidden release
+  `cfc41e51-efa2-4c28-9259-8d0988b275d9`, while public exposure and production
+  publication remained disabled
+- left Gate 2 deliberately open for the independent Claude Desktop lane and
+  final settled-client replay; the Codex proof does not stand in for those
+  separate claims
 
 ## 2026-09-08 - Shared Realtime Admission And The Operational Worker Went Live
 

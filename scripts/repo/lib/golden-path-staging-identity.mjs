@@ -2,14 +2,20 @@ import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import {
-  platformMachineListReleasesResultSchema,
-  platformMachineLogoutResultSchema,
-  platformMachineMeResultSchema,
-} from "@air-jam/sdk/platform-machine";
 import postgres from "postgres";
 
+import { ensureWorkspacePackageBuild } from "../../ensure-workspace-package-build.mjs";
+
 const identityLifetimeMs = 4 * 60 * 60 * 1_000;
+let platformMachineSchemasPromise;
+
+const loadPlatformMachineSchemas = () => {
+  platformMachineSchemasPromise ??= (async () => {
+    await ensureWorkspacePackageBuild("@air-jam/sdk");
+    return import("@air-jam/sdk/platform-machine");
+  })();
+  return platformMachineSchemasPromise;
+};
 
 const writePrivateJson = (targetPath, value) => {
   // Keep this run-scoped synchronous writer aligned with the canonical session
@@ -59,6 +65,8 @@ export const provisionGoldenPathStagingIdentity = async ({
       "Golden-path staging did not expose its attested database target.",
     );
   }
+  const { platformMachineLogoutResultSchema, platformMachineMeResultSchema } =
+    await loadPlatformMachineSchemas();
 
   const userId = `golden-path-${runId}`;
   const user = {
@@ -171,6 +179,8 @@ export const verifyGoldenPathHiddenRelease = async ({
   token,
   fetchImpl = fetch,
 }) => {
+  const { platformMachineListReleasesResultSchema } =
+    await loadPlatformMachineSchemas();
   const slug = `signal-relay-${runId}`;
   const payload = await requestMachineApi({
     stagingUrl: stagingTarget.url,
@@ -217,6 +227,8 @@ export const revokeGoldenPathStagingIdentity = async ({
   fetchImpl = fetch,
 }) => {
   try {
+    const { platformMachineLogoutResultSchema } =
+      await loadPlatformMachineSchemas();
     await requestMachineApi({
       stagingUrl: stagingTarget.url,
       pathname: "/api/cli/auth/logout",

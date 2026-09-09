@@ -1,0 +1,90 @@
+{
+  "runId": "g2-03-20260909-a22",
+  "workspace": "<run>/workspace",
+  "evidenceDirectory": "<run>/evidence",
+  "stateDirectory": "<run>/state",
+  "temporaryDirectory": "<run>/tmp",
+  "candidateRegistry": "<candidate-registry>",
+  "airJamUpstreamFallback": false,
+  "candidateDependencyGraphWarmed": true,
+  "scaffoldDependencyGraphWarmed": false,
+  "stagingPlatform": "https://games-staging.air-jam.app",
+  "stagingProvider": {
+    "provider": "railway",
+    "projectId": "0b0761f9-9bb1-4d4f-8191-50d43cccdee7",
+    "projectName": "air-jam",
+    "environmentId": "814fa07a-ed20-48c0-ba1a-b8a0524c516e",
+    "environmentName": "staging-golden-path-20260908",
+    "isEphemeral": true,
+    "serviceId": "5966dcb6-88cb-49d6-a1fa-60ca78c533ac",
+    "serviceName": "air-jam-platform",
+    "deploymentId": "9b91fb7d-c86e-4127-b7c8-c13c86d0d7f0",
+    "deploymentStatus": "SUCCESS",
+    "url": "https://games-staging.air-jam.app",
+    "health": {
+      "ok": true,
+      "service": "platform"
+    },
+    "isolation": {
+      "providerEnvironmentIdentity": true,
+      "applicationServiceInstancesDistinct": true,
+      "postgresServiceInstanceDistinct": true,
+      "databaseTargetDistinctOrProviderScoped": true,
+      "productionVariableValuesNotReused": true,
+      "releaseStorageIsolated": true,
+      "releaseStorageCredential": {
+        "bucket": "air-jam-preview-releases",
+        "scope": "object-read-write",
+        "issuedAt": "2026-09-08T14:39:26.000Z",
+        "expiresAt": "2026-09-09T14:39:26.000Z",
+        "ttlSeconds": 86400,
+        "endpointHostname": "c45f3cd61fcad1e24e5e14401f258723.r2.cloudflarestorage.com"
+      },
+      "releasePipelineIsolated": true,
+      "publicOriginDistinct": true
+    },
+    "verifiedAt": "2026-09-09T04:02:24.478Z",
+    "productionAllowed": false
+  },
+  "requestedProductionAllowed": false,
+  "requestedArcadeVisibility": "hidden",
+  "platformReleaseVerification": {
+    "verifiedAt": "2026-09-09T04:24:03.629Z",
+    "gameId": "25f082f2-56b1-4b66-b355-156bf8a89c55",
+    "gameSlug": "signal-relay-g2-03-20260909-a22",
+    "releaseId": "cfc41e51-efa2-4c28-9259-8d0988b275d9",
+    "generationId": "20201bb2-419a-4861-b5c1-5c261e2f9251",
+    "status": "ready",
+    "arcadeVisibility": "hidden",
+    "publishedAt": null,
+    "publicRuntimeExposed": false,
+    "productionAllowed": false
+  },
+  "stagingMachineIdentity": {
+    "provisioned": true,
+    "validated": true,
+    "platformBaseUrl": "https://games-staging.air-jam.app",
+    "userId": "golden-path-g2-03-20260909-a22",
+    "role": "creator",
+    "sessionId": "0e2d12c9-51f3-435d-b5ed-9e9f412691e0",
+    "storedAt": "2026-09-09T04:02:25.146Z",
+    "expiresAt": "2026-09-09T08:02:24.493Z"
+  },
+  "privateRepositoryContextProvided": false,
+  "workspaceOutsideAirJamMonorepo": true,
+  "inheritedCredentialEnvironment": false,
+  "childAirJamRepositoryReadAccess": false,
+  "workspaceWriteAccess": true,
+  "networkAllowlist": [
+    "127.0.0.1",
+    "localhost",
+    "games-staging.air-jam.app",
+    "c45f3cd61fcad1e24e5e14401f258723.r2.cloudflarestorage.com"
+  ],
+  "candidateRegistryNetworkAccess": true,
+  "undeclaredNetworkAccess": false,
+  "verified": true,
+  "maintainerEditsAfterStart": [
+    "declared-win-score-fault-only"
+  ]
+}
