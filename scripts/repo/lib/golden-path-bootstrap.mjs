@@ -782,6 +782,7 @@ export const runGoldenPathBootstrap = async ({
         "airjam.open_game_session",
         "airjam.read_game_session",
         "airjam.invoke_game_session_action",
+        "airjam.capture_game_session_visuals",
         "airjam.close_game_session",
       ],
       expectedToolNames: standaloneGameMcpToolNames,

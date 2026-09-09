@@ -169,6 +169,7 @@ describe("createAirJamMcpServer", () => {
       "airjam.send_game_session_input",
       "airjam.read_game_session",
       "airjam.invoke_game_session_action",
+      "airjam.capture_game_session_visuals",
       "airjam.close_game_session",
     ]);
 
@@ -190,6 +191,9 @@ describe("createAirJamMcpServer", () => {
     );
     expect(listed.tools.map((tool) => tool.name)).toContain(
       "airjam.release_finalize",
+    );
+    expect(listed.tools.map((tool) => tool.name)).toContain(
+      "airjam.capture_game_session_visuals",
     );
     expect(listed.tools.map((tool) => tool.name)).toContain(
       "airjam.release_export",
@@ -228,6 +232,9 @@ describe("createAirJamMcpServer", () => {
     );
     expect(listed.tools.map((tool) => tool.name)).toContain(
       "airjam.invoke_game_session_action",
+    );
+    expect(listed.tools.map((tool) => tool.name)).toContain(
+      "airjam.capture_game_session_visuals",
     );
     expect(listed.tools.map((tool) => tool.name)).toContain(
       "airjam.close_game_session",

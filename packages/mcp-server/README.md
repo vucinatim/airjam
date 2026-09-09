@@ -24,5 +24,7 @@ only need to narrow a failure.
 
 For reliable gameplay assertions, use `airjam.open_game_session`,
 `airjam.read_game_session`, `airjam.invoke_game_session_action`, and
-`airjam.close_game_session`. Browser interaction remains visual proof rather
+`airjam.close_game_session`. Use `airjam.capture_game_session_visuals` to
+capture the owning room's canonical host and controller views when the client
+cannot launch its own browser. Browser interaction remains visual proof rather
 than the primary automation lane.

@@ -59,6 +59,7 @@ import {
 } from "./ai-pack";
 import { runMcpConfig, runMcpDoctor, runMcpInit } from "./mcp";
 import {
+  captureSessionVisuals,
   closeSession,
   invokeSessionAction,
   openSession,
@@ -1855,6 +1856,27 @@ const buildProgram = () => {
         ...(input.payload !== undefined
           ? { payload: parseJsonValue(input.payload) }
           : {}),
+        timeoutMs: input.timeoutMs,
+      });
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    });
+
+  sessionCommand
+    .command("capture")
+    .description(
+      "Capture canonical host and controller screenshots from a persistent session",
+    )
+    .argument("<session-id>", "Game session ID")
+    .option("--dir <path>", "Project directory")
+    .option("--timeout-ms <ms>", "Capture timeout in milliseconds", Number)
+    .action(async (sessionId: string, options: unknown) => {
+      const input = resolveActionOptions<{
+        dir?: string;
+        timeoutMs?: number;
+      }>(options);
+      const result = await captureSessionVisuals({
+        dir: input.dir,
+        gameSessionId: sessionId,
         timeoutMs: input.timeoutMs,
       });
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

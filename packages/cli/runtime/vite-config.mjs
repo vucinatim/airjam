@@ -97,6 +97,8 @@ const createSharedDevServerConfig = ({ env, port }) => ({
   cors: true,
 });
 
+const AIR_JAM_GENERATED_STATE_GLOB = "**/.airjam/**";
+
 export const createAirJamViteConfig = ({
   env = process.env,
   port = Number(env.VITE_PORT || 5173),
@@ -114,6 +116,13 @@ export const createAirJamViteConfig = ({
     build,
     server: {
       ...createSharedDevServerConfig({ env, port }),
+      watch: {
+        // Runtime logs, managed-process state, screenshots, and other generated
+        // Air Jam artifacts live here. Watching them creates a feedback loop:
+        // browser activity writes a log entry, Vite reloads the browser, and
+        // the reload writes another entry.
+        ignored: [AIR_JAM_GENERATED_STATE_GLOB],
+      },
       proxy: getAirJamDevProxyOptions(env),
     },
     preview: createSharedDevServerConfig({ env, port }),

@@ -397,6 +397,7 @@ test("airjam exposes persistent semantic session lifecycle help", () => {
   assert.match(output, /open/);
   assert.match(output, /read/);
   assert.match(output, /invoke/);
+  assert.match(output, /capture/);
   assert.match(output, /close/);
   assert.match(output, /broker/);
 });

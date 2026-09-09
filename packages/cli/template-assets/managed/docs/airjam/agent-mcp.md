@@ -42,8 +42,9 @@ Use the Air Jam MCP first for:
 9. `send_game_session_input`
 10. `read_game_session`
 11. `invoke_game_session_action`
-12. `close_game_session`
-13. `run_quality_gate`
+12. `capture_game_session_visuals`
+13. `close_game_session`
+14. `run_quality_gate`
 
 Use direct shell commands only when:
 
@@ -64,6 +65,7 @@ When local UI verification matters:
 8. use normal `pnpm run dev -- --secure` when HTTPS is required
 9. use visible preview controllers for controller UI smoke proof with real browser click/drag/release gestures
 10. do not synthesize pointer events into controller iframes from parent-page eval; use semantic game actions when reliable gameplay proof matters
+11. when the agent cannot own a browser process, use `airjam.capture_game_session_visuals` on the room-owning session to capture canonical host and controller screenshots through Air Jam's project-scoped runtime owner
 
 ## Debugging Rule
 
@@ -74,7 +76,7 @@ For runtime or multiplayer issues:
 3. narrow with `trace`, `room`, `controller`, `runtime`, `process`, or `source`
 4. only add ad hoc logs after the canonical log stream is insufficient
 5. prefer `airjam.topology` over manually reconstructing local endpoints
-6. when you need to drive a live game, use `airjam.open_game_session`, `airjam.send_game_session_input`, `airjam.read_game_session`, `airjam.invoke_game_session_action`, and `airjam.close_game_session`
+6. when you need to drive and inspect a live game, use `airjam.open_game_session`, `airjam.send_game_session_input`, `airjam.read_game_session`, `airjam.invoke_game_session_action`, `airjam.capture_game_session_visuals`, and `airjam.close_game_session`
 7. use the unified session action metadata from `airjam.open_game_session` and `airjam.read_game_session` before guessing payload shapes
 8. session action ids are lane-prefixed on purpose: `player:<actionId>` for semantic player-lane actions and `host:<actionId>` for semantic host-lane staging actions
 9. when a compatible local Air Jam dev session is already running, the official harness/session tools should attach to that live stack instead of trying to start a duplicate dev server
@@ -108,7 +110,8 @@ Use:
 2. `airjam.send_game_session_input`
 3. `airjam.read_game_session`
 4. `airjam.invoke_game_session_action`
-5. `airjam.close_game_session`
+5. `airjam.capture_game_session_visuals`
+6. `airjam.close_game_session`
 
 If a clean-slate project does not ship those files yet but the game is growing beyond a trivial single-screen flow:
 

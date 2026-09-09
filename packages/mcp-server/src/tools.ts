@@ -8,6 +8,7 @@ import {
   stopDev,
 } from "@air-jam/devtools-core/dev";
 import {
+  captureGameSessionVisuals,
   closeGameSession,
   invokeGameSessionAction,
   openGameSession,
@@ -238,6 +239,10 @@ export const buildToolDefinitions = ({
     gameId: z.string().optional(),
   });
   const openGameSessionInputSchema = buildConnectControllerSchema(projectMode);
+  const captureGameSessionInputSchema = z.object({
+    gameSessionId: z.string().uuid(),
+    timeoutMs: z.number().int().positive().optional(),
+  });
   const gameSessionInputSchema = z.object({
     gameSessionId: z.string().min(1),
   });
@@ -577,6 +582,13 @@ export const buildToolDefinitions = ({
       inputSchema: invokeGameSessionActionInputSchema,
       run: async (input: z.infer<typeof invokeGameSessionActionInputSchema>) =>
         withJsonText(await invokeGameSessionAction(input)),
+    },
+    "airjam.capture_game_session_visuals": {
+      description:
+        "Capture canonical host and controller screenshots from the browser runtime owned by an open game session.",
+      inputSchema: captureGameSessionInputSchema,
+      run: async (input: z.infer<typeof captureGameSessionInputSchema>) =>
+        withJsonText(await captureGameSessionVisuals(input)),
     },
     "airjam.close_game_session": {
       description:

@@ -7,6 +7,7 @@ import {
 } from "node:http";
 import path from "node:path";
 import {
+  captureGameSessionVisuals,
   closeGameSession,
   invokeGameSessionAction,
   openGameSession,
@@ -14,6 +15,7 @@ import {
   sendGameSessionInput,
 } from "./game-session.js";
 import type {
+  CaptureGameSessionVisualsOptions,
   CloseGameSessionOptions,
   InvokeGameSessionActionOptions,
   OpenGameSessionOptions,
@@ -37,6 +39,7 @@ export type AirJamGameSessionBrokerOperation =
   | { operation: "read"; input: ReadGameSessionOptions }
   | { operation: "input"; input: SendGameSessionInputOptions }
   | { operation: "invoke"; input: InvokeGameSessionActionOptions }
+  | { operation: "capture"; input: CaptureGameSessionVisualsOptions }
   | { operation: "close"; input: CloseGameSessionOptions }
   | { operation: "shutdown"; input?: undefined };
 
@@ -119,7 +122,9 @@ export const requestGameSessionBroker = async <TResult>({
   const timeoutMs =
     request.operation === "open"
       ? Math.max(120_000, (request.input.timeoutMs ?? 0) + 60_000)
-      : request.operation === "read" || request.operation === "invoke"
+      : request.operation === "read" ||
+          request.operation === "invoke" ||
+          request.operation === "capture"
         ? Math.max(30_000, (request.input.timeoutMs ?? 0) + 10_000)
         : 30_000;
   const response = await fetch(`${state.origin}/v1/game-session`, {
@@ -214,6 +219,9 @@ export const runGameSessionBroker = async ({
           break;
         case "invoke":
           result = await invokeGameSessionAction(operation.input);
+          break;
+        case "capture":
+          result = await captureGameSessionVisuals(operation.input);
           break;
         case "close":
           result = await closeGameSession(operation.input);
