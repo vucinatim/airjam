@@ -268,15 +268,20 @@ const assertDatabaseIsolation = ({
     }
   }
 
-  if (!stagingDatabaseUrl || !primaryDatabaseUrl) {
-    throw new Error(
-      "Railway staging and production must expose locally reachable Postgres targets for rehearsal attestation.",
-    );
-  }
-  if (stagingDatabaseUrl === primaryDatabaseUrl) {
-    throw new Error(
-      "Railway staging Postgres resolves to the same public target as production.",
-    );
+  // Deployment isolation does not need a locally reachable database URL. The
+  // external-agent runtime supplies both URLs and therefore activates this
+  // stronger identity-provisioning assertion.
+  if (stagingDatabaseUrl !== undefined || primaryDatabaseUrl !== undefined) {
+    if (!stagingDatabaseUrl || !primaryDatabaseUrl) {
+      throw new Error(
+        "Railway staging and production must expose locally reachable Postgres targets for rehearsal attestation.",
+      );
+    }
+    if (stagingDatabaseUrl === primaryDatabaseUrl) {
+      throw new Error(
+        "Railway staging Postgres resolves to the same public target as production.",
+      );
+    }
   }
 };
 

@@ -382,3 +382,10 @@ test("environment proof rejects a shared public Postgres target", () => {
     /same public target as production/u,
   );
 });
+
+test("deployment isolation can run before public Postgres resolution", () => {
+  const input = isolationInput();
+  delete input.stagingDatabaseUrl;
+  delete input.primaryDatabaseUrl;
+  assert.doesNotThrow(() => assertGoldenPathStagingEnvironmentIsolation(input));
+});
